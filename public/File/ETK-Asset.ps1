@@ -2,7 +2,7 @@
 # Gerätedaten sammeln und an Server senden
 # ============================================================
 
- $ip = "DIE IP ADRESSE"
+ $ip = "DIE IP ADRESSE!"
  $hostname = $env:COMPUTERNAME
  $user = $env:USERNAME
  $os = (Get-WmiObject Win32_OperatingSystem).Caption
