@@ -3,7 +3,8 @@ const fs = require('fs').promises;
 const path = require('path');
 const os = require('os');
 const app = express();
-const PORT = 2000;
+// 修改端口为80，这样可以直接通过IP地址访问，无需指定端口号
+const PORT = 80; 
 const clients = [];
 
 // Pfad zur devices.json Datei im öffentlichen Verzeichnis
@@ -240,20 +241,20 @@ async function startServer() {
         console.log('==================================================');
         console.log(`🚀 ETK Asset Management Server läuft auf Port ${PORT}`);
         console.log('==================================================');
-        console.log(`📍 Lokal:            http://localhost:${PORT}`);
+        console.log(`📍 Lokal:            http://localhost`);
         if (localIps.length) {
             console.log(`🌐 Im Netzwerk erreichbar unter:`);
-            localIps.forEach(ip => console.log(`   http://${ip}:${PORT}`));
+            localIps.forEach(ip => console.log(`   http://${ip}`));
         } else {
             console.log('⚠️  Keine Netzwerk-IP gefunden.');
         }
         console.log('==================================================');
         console.log(`📊 API-Endpunkte:`);
-        console.log(`   GET    http://localhost:${PORT}/api/devices`);
-        console.log(`   POST   http://localhost:${PORT}/api/devices`);
-        console.log(`   PUT    http://localhost:${PORT}/api/devices/:assetNumber`);
-        console.log(`   DELETE http://localhost:${PORT}/api/devices/:assetNumber`);
-        console.log(`   Events http://localhost:${PORT}/events`);
+        console.log(`   GET    http://localhost/api/devices`);
+        console.log(`   POST   http://localhost/api/devices`);
+        console.log(`   PUT    http://localhost/api/devices/:assetNumber`);
+        console.log(`   DELETE http://localhost/api/devices/:assetNumber`);
+        console.log(`   Events http://localhost/events`);
         console.log('==================================================');
         sendServerStartMessage();
     });
