@@ -4,25 +4,6 @@ const http = require('http');
 const fs = require('fs').promises;
 const path = require('path');
 const os = require('os');
-const cluster = require('cluster');
-const numCPUs = require('os').cpus().length;
-
-// Cluster für Skalierung
-if (cluster.isMaster && process.env.NODE_ENV !== 'development') {
-  console.log(`🏗️  Master ${process.pid} is running`);
-  
-  // Fork workers
-  for (let i = 0; i < Math.min(numCPUs, 4); i++) {
-    cluster.fork();
-  }
-  
-  cluster.on('exit', (worker, code, signal) => {
-    console.log(`❌ Worker ${worker.process.pid} died. Forking new worker...`);
-    cluster.fork();
-  });
-  
-  return;
-}
 
 const app = express();
 const PORT_HTTP = process.env.PORT || 2000; // Standard HTTP Port
@@ -98,175 +79,6 @@ async function checkSSLCertificates() {
   }
 }
 
-// Erweiterte Middleware
-app.use(express.static(path.join(__dirname, 'public'), {
-  maxAge: '1h',
-  etag: false
-}));
-
-app.use(express.json({ 
-  limit: '100mb',
-  verify: (req, res, buf) => {
-    req.rawBody = buf;
-  }
-}));
-
-app.use(express.urlencoded({ 
-  extended: true, 
-  limit: '100mb' 
-}));
-
-// Memory Management
-const activeConnections = new Map();
-let currentMemoryUsage = 0;
-
-const MEMORY_LIMITS = {
-    MAX_MEMORY_USAGE: 500 * 1024 * 1024, // 500MB Hard Limit
-    WARNING_THRESHOLD: 400 * 1024 * 1024, // 400MB Warning
-    CHUNK_SIZE: 20 * 1024 * 1024,
-    MAX_CONCURRENT_TRANSFERS: 5
-};
-
-function updateMemoryUsage(delta) {
-  currentMemoryUsage += delta;
-  
-  if (currentMemoryUsage > MEMORY_LIMITS.MAX_MEMORY_USAGE) {
-    cleanupMemory();
-  }
-}
-
-function cleanupMemory() {
-  const now = Date.now();
-  const connectionTimeout = 5 * 60 * 1000;
-  
-  // Bereinige inaktive SSE-Verbindungen
-  activeConnections.forEach((info, res) => {
-    if (now - info.lastActivity > connectionTimeout) {
-      if (!res.headersSent) {
-        res.end();
-      }
-      activeConnections.delete(res);
-    }
-  });
-  
-  console.log(`🧹 Memory bereinigt. Aktuelle Nutzung: ${formatFileSize(currentMemoryUsage)}`);
-}
-
-function checkMemoryUsage() {
-    const usage = process.memoryUsage();
-    const realUsage = usage.heapUsed + usage.external;
-    
-    if (realUsage > MEMORY_LIMITS.MAX_MEMORY_USAGE) {
-        console.error('🚨 CRITICAL: Memory limit exceeded');
-        return false;
-    }
-    
-    if (realUsage > MEMORY_LIMITS.WARNING_THRESHOLD) {
-        console.warn('⚠️ WARNING: High memory usage -', formatFileSize(realUsage));
-        cleanupMemory();
-    }
-    
-    return true;
-}
-
-function formatFileSize(bytes) {
-  if (bytes === 0) return '0 Bytes';
-  const k = 1024;
-  const sizes = ['Bytes', 'KB', 'MB', 'GB'];
-  const i = Math.floor(Math.log(bytes) / Math.log(k));
-  return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
-}
-
-// SSE Endpunkt für Echtzeit-Kommunikation
-app.get('/events', (req, res) => {
-    res.setHeader('Content-Type', 'text/event-stream');
-    res.setHeader('Cache-Control', 'no-cache');
-    res.setHeader('Connection', 'keep-alive');
-    res.setHeader('Access-Control-Allow-Origin', '*');
-    
-    // Speichere Client mit Metadaten
-    activeConnections.set(res, {
-        connectedAt: Date.now(),
-        lastActivity: Date.now(),
-        ip: req.socket.remoteAddress,
-        userAgent: req.headers['user-agent'] || 'Unbekannt'
-    });
-    
-    clients.push(res);
-    
-    // Heartbeat für die Verbindung
-    const heartbeatInterval = setInterval(() => {
-        if (activeConnections.has(res)) {
-            try {
-                res.write(': heartbeat\n\n');
-                activeConnections.get(res).lastActivity = Date.now();
-            } catch (error) {
-                console.log('⚠️ Heartbeat fehlgeschlagen');
-                clearInterval(heartbeatInterval);
-            }
-        } else {
-            clearInterval(heartbeatInterval);
-        }
-    }, 30000);
-    
-    req.on('close', () => {
-        clearInterval(heartbeatInterval);
-        activeConnections.delete(res);
-        const index = clients.indexOf(res);
-        if (index > -1) {
-            clients.splice(index, 1);
-        }
-    });
-    
-    // Sofortige Willkommensnachricht
-    res.write(`data: ${JSON.stringify({
-        type: 'connected',
-        message: 'SSE Verbindung hergestellt',
-        timestamp: new Date().toISOString()
-    })}\n\n`);
-});
-
-// Funktion zum Senden von Events an alle verbundenen Clients
-function sendEventToClients(data) {
-    const now = Date.now();
-    activeConnections.forEach((info, client) => {
-        try {
-            client.write(`data: ${JSON.stringify(data)}\n\n`);
-            info.lastActivity = now;
-        } catch (error) {
-            console.log('⚠️ Fehler beim Senden an Client:', error.message);
-            activeConnections.delete(client);
-            const index = clients.indexOf(client);
-            if (index > -1) {
-                clients.splice(index, 1);
-            }
-        }
-    });
-}
-
-// Middleware für CORS
-app.use((req, res, next) => {
-  const userAgent = req.headers['user-agent'] || '';
-  const isSafari = userAgent.includes('Safari') && !userAgent.includes('Chrome');
-  
-  if (isSafari) {
-    res.header('Access-Control-Allow-Origin', '*');
-    res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
-    res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization');
-    res.header('Access-Control-Allow-Credentials', 'true');
-  } else {
-    res.header('Access-Control-Allow-Origin', '*');
-    res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization');
-    res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
-  }
-  
-  if ('OPTIONS' == req.method) {
-    res.sendStatus(200);
-  } else {
-    next();
-  }
-});
-
 // ==================== API-Endpunkte ====================
 
 // GET /api/devices - Ruft alle Geräte ab
@@ -319,20 +131,10 @@ app.post('/api/devices', async (req, res) => {
             };
             
             console.log(`Gerät aktualisiert: ${newDevice.assetNumber || newDevice.hostname}`);
-            sendEventToClients({
-                type: 'device-updated',
-                message: `Gerät ${newDevice.assetNumber} wurde aktualisiert`,
-                device: devices[existingIndex]
-            });
             res.status(200).json({ message: 'Gerät erfolgreich aktualisiert', device: devices[existingIndex] });
         } else {
             devices.push(newDevice);
             console.log(`Neues Gerät hinzugefügt: ${newDevice.assetNumber || newDevice.hostname}`);
-            sendEventToClients({
-                type: 'device-added',
-                message: `Neues Gerät ${newDevice.assetNumber} wurde hinzugefügt`,
-                device: newDevice
-            });
             res.status(201).json({ message: 'Gerät erfolgreich hinzugefügt', device: newDevice });
         }
 
@@ -367,12 +169,6 @@ app.put('/api/devices/:assetNumber', async (req, res) => {
         await fs.writeFile(devicesFile, JSON.stringify(devices, null, 2));
         console.log(`Gerät aktualisiert (PUT): ${assetNumber}`);
         
-        sendEventToClients({
-            type: 'device-updated',
-            message: `Gerät ${assetNumber} wurde aktualisiert`,
-            device: devices[deviceIndex]
-        });
-        
         res.status(200).json({ message: 'Gerät erfolgreich aktualisiert', device: devices[deviceIndex] });
     } catch (error) {
         console.error('Fehler beim Aktualisieren des Geräts (PUT):', error);
@@ -392,11 +188,6 @@ app.delete('/api/devices/:assetNumber', async (req, res) => {
         if (devices.length < initialLength) {
             await fs.writeFile(devicesFile, JSON.stringify(devices, null, 2));
             console.log(`Gerät gelöscht: ${assetNumber}`);
-            sendEventToClients({
-                type: 'device-deleted',
-                message: `Gerät ${assetNumber} wurde gelöscht`,
-                assetNumber: assetNumber
-            });
             res.status(200).json({ message: 'Gerät erfolgreich gelöscht' });
         } else {
             res.status(404).json({ error: 'Gerät nicht gefunden' });
@@ -414,17 +205,8 @@ app.get('/', (req, res) => {
 
 // API für Server-Status
 app.get('/api/server-info', (req, res) => {
-    const memoryUsage = process.memoryUsage();
     res.json({
         status: 'online',
-        connections: activeConnections.size,
-        memory: {
-            used: formatFileSize(memoryUsage.heapUsed),
-            total: formatFileSize(memoryUsage.heapTotal),
-            rss: formatFileSize(memoryUsage.rss)
-        },
-        uptime: process.uptime(),
-        worker: process.pid,
         ports: {
             http: PORT_HTTP_80,
             http_alt: PORT_HTTP,
@@ -459,36 +241,11 @@ async function initializeDevicesFile() {
     }
 }
 
-// Regelmäßige Bereinigung
-function setupCleanupIntervals() {
-    setInterval(() => {
-        const now = Date.now();
-        const connectionTimeout = 5 * 60 * 1000;
-        
-        activeConnections.forEach((info, res) => {
-            if (now - info.lastActivity > connectionTimeout) {
-                console.log(`🧹 Inaktive Verbindung bereinigt: ${info.ip}`);
-                if (!res.headersSent) {
-                    res.end();
-                }
-                activeConnections.delete(res);
-                const index = clients.indexOf(res);
-                if (index > -1) {
-                    clients.splice(index, 1);
-                }
-            }
-        });
-        
-        checkMemoryUsage();
-    }, 60000);
-}
-
 // ==================== Server-Start ====================
 
 async function startServer() {
     await checkSSLCertificates();
     await initializeDevicesFile();
-    setupCleanupIntervals();
     
     const localIps = getAllLocalIps();
     
@@ -498,7 +255,6 @@ async function startServer() {
         httpServer80.listen(PORT_HTTP_80, () => {
             console.log('==================================================');
             console.log(`🚀 ETK Asset Management Server`);
-            console.log(`👷 Worker ${process.pid} gestartet`);
             console.log('==================================================');
             console.log(`🌐 HTTP Server läuft auf Port ${PORT_HTTP_80} (ohne Portnummer erreichbar)`);
             console.log('--------------------------------------------------');
@@ -540,7 +296,6 @@ async function startServer() {
                 console.log(`   POST   /api/devices`);
                 console.log(`   PUT    /api/devices/:assetNumber`);
                 console.log(`   DELETE /api/devices/:assetNumber`);
-                console.log(`   Events /events`);
                 console.log(`   Status /api/server-info`);
                 console.log('==================================================');
             });
@@ -568,25 +323,9 @@ async function startServer() {
     process.on('SIGINT', () => {
         console.log('\n==================================================');
         console.log('🛑 Server wird heruntergefahren...');
-        
-        sendEventToClients({
-            type: 'server-status',
-            message: 'Server wird heruntergefahren. Verbindung wird getrennt.',
-            timestamp: new Date().toISOString()
-        });
-        
-        // Schließe alle SSE-Verbindungen
-        activeConnections.forEach((info, client) => {
-            if (!client.headersSent) {
-                client.end();
-            }
-        });
-        
-        setTimeout(() => {
-            console.log('✅ Server erfolgreich heruntergefahren.');
-            console.log('==================================================');
-            process.exit(0);
-        }, 1000);
+        console.log('✅ Server erfolgreich heruntergefahren.');
+        console.log('==================================================');
+        process.exit(0);
     });
 }
 
