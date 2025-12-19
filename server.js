@@ -21,6 +21,14 @@ const sslOptions = {
   isHttpsAvailable: false
 };
 
+// WICHTIG: Statische Dateien servieren - FIX für das Bildproblem
+app.use(express.static(path.join(__dirname, 'public')));
+app.use('/Bilder', express.static(path.join(__dirname, 'Bilder')));
+
+// JSON Body Parser Middleware für API-Anfragen
+app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
+
 // Prüfe ob SSL Zertifikate vorhanden sind
 async function checkSSLCertificates() {
   try {
