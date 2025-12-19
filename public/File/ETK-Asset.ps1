@@ -135,66 +135,66 @@ foreach ($disk in $logicalDisks) {
 }
 
 # ============================================================
-# KORRIGIERTER ABSCHNITT: Netzwerk-Laufwerke (gemappte Netzlaufwerke)
+# VERBESSERTER ABSCHNITT: Netzwerk-Laufwerke (gemappte Netzlaufwerke)
 # ============================================================
  $networkDrives = @()
 try {
-    # Führe 'net use' aus, um alle gemappten Laufwerke zu erhalten
-    $netUseOutput = net use
+    # Prüft Registry-Einträge für persistente Laufwerke
+    $mappedDrivesRegistry = Get-ItemProperty -Path "HKCU:\Network\*" -ErrorAction SilentlyContinue
 
-    # Iteriere durch jede Zeile der Ausgabe
-    foreach ($line in $netUseOutput) {
-        # Verwende einen regulären Ausdruck, um Zeilen mit Laufwerksbuchstaben zu finden
-        # Muster: Anfang der Zeile, Leerzeichen, ein Buchstabe, ein Doppelpunkt
-        if ($line -match "^\s*([A-Z]):\s+") {
-            $driveLetter = $matches[1] + ":"
+    foreach ($drive in $mappedDrivesRegistry) {
+        # Der Name des Registry-Keys ist der Laufwerksbuchstabe
+        $driveLetter = $drive.PSChildName + ":"
+        $remotePath = $drive.RemotePath
 
-            # Teile die Zeile in ihre Bestandteile auf, um den Remote-Pfad zu finden
-            # Die Spalten sind durch mehrere Leerzeichen getrennt
-            $parts = $line -split '\s{2,}'
-            
-            # Der Remote-Pfad ist normalerweise das dritte Element (Index 2)
-            if ($parts.Count -ge 3) {
-                $remotePath = $parts[2].Trim()
+        # Versuche, die Laufwerksinformationen mit Get-PSDrive abzurufen
+        # Dies schlägt fehl, wenn das Laufwerk nicht verbunden ist
+        try {
+            $psDrive = Get-PSDrive -Name $drive.PSChildName -ErrorAction Stop
 
-                # Hole detaillierte Informationen für den Laufwerksbuchstaben mit Get-PSDrive
-                try {
-                    # Entferne den Doppelpunkt für Get-PSDrive
-                    $psDrive = Get-PSDrive -Name $driveLetter.Replace(":", "") -ErrorAction Stop
+            if ($psDrive) {
+                $sizeGB = [Math]::Round(($psDrive.Used + $psDrive.Free) / 1GB, 2)
+                $freeGB = [Math]::Round($psDrive.Free / 1GB, 2)
+                $usedGB = [Math]::Round($psDrive.Used / 1GB, 2)
+                $usedPercentage = if ($sizeGB -gt 0) { [Math]::Round($usedGB / $sizeGB * 100, 2) } else { 0 }
 
-                    if ($psDrive) {
-                        # Berechne die Größen
-                        $sizeGB = [Math]::Round(($psDrive.Used + $psDrive.Free) / 1GB, 2)
-                        $freeGB = [Math]::Round($psDrive.Free / 1GB, 2)
-                        $usedGB = [Math]::Round($psDrive.Used / 1GB, 2)
-                        $usedPercentage = if ($sizeGB -gt 0) { [Math]::Round($usedGB / $sizeGB * 100, 2) } else { 0 }
-
-                        $driveDetails = @{
-                            DeviceID = $driveLetter
-                            SizeGB = $sizeGB
-                            FreeGB = $freeGB
-                            UsedGB = $usedGB
-                            UsedPercentage = $usedPercentage
-                            VolumeName = $psDrive.Description
-                            VolumeSerialNumber = "N/A" # Wird von Get-PSDrive nicht bereitgestellt
-                            FileSystem = $psDrive.Provider.Name
-                            DriveType = "Netzwerk-Laufwerk"
-                            ProviderName = $remotePath
-                        }
-                        $networkDrives += $driveDetails
-                    }
-                } catch {
-                    Write-Host "Fehler beim Abrufen der Details für Laufwerk $driveLetter : $($_.Exception.Message)" -ForegroundColor Yellow
+                $driveDetails = @{
+                    DeviceID = $driveLetter
+                    SizeGB = $sizeGB
+                    FreeGB = $freeGB
+                    UsedGB = $usedGB
+                    UsedPercentage = $usedPercentage
+                    VolumeName = $psDrive.Description
+                    VolumeSerialNumber = "N/A" # Wird von Get-PSDrive nicht bereitgestellt
+                    FileSystem = $psDrive.Provider.Name
+                    DriveType = "Netzwerk-Laufwerk"
+                    ProviderName = $remotePath
                 }
+                $networkDrives += $driveDetails
             }
+        } catch {
+            # Wenn Get-PSDrive fehlschlägt (Laufwerk nicht verbunden), füge es mit begrenzten Informationen hinzu
+            Write-Host "Laufwerk $driveLetter ist in der Registry vorhanden, aber nicht verbunden. Informationen sind begrenzt." -ForegroundColor Yellow
+            $driveDetails = @{
+                DeviceID = $driveLetter
+                SizeGB = "N/A"
+                FreeGB = "N/A"
+                UsedGB = "N/A"
+                UsedPercentage = "N/A"
+                VolumeName = "Nicht verbunden"
+                VolumeSerialNumber = "N/A"
+                FileSystem = "N/A"
+                DriveType = "Netzwerk-Laufwerk"
+                ProviderName = $remotePath
+            }
+            $networkDrives += $driveDetails
         }
     }
 } catch {
-    Write-Host "Fehler beim Ausführen von 'net use' oder beim Verarbeiten der Ausgabe: $($_.Exception.Message)" -ForegroundColor Red
+    Write-Host "Fehler beim Lesen der Registry für Netzwerklaufwerke: $($_.Exception.Message)" -ForegroundColor Red
 }
-
 # ============================================================
-# ENDE DES KORRIGIERTEN ABSCHNITTS
+# ENDE DES VERBESSERTEN ABSCHNITTS
 # ============================================================
 
 # Cloud-Laufwerke erkennen
