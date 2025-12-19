@@ -134,27 +134,63 @@ foreach ($disk in $logicalDisks) {
     $localDrives += $driveDetails
 }
 
-# Netzwerk-Laufwerke (gemappte Netzlaufwerke)
+# ============================================================
+# KORRIGIERTER ABSCHNITT: Netzwerk-Laufwerke (gemappte Netzlaufwerke)
+# ============================================================
  $networkDrives = @()
- $logicalDisks = Get-WmiObject Win32_LogicalDisk -Filter "DriveType=4" # Nur Netzwerk-Laufwerke
+try {
+    # Führe 'net use' aus, um alle gemappten Laufwerke zu erhalten
+    $netUseOutput = net use
 
-foreach ($disk in $logicalDisks) {
-    $driveDetails = @{
-        DeviceID = $disk.DeviceID
-        SizeGB = [Math]::Round($disk.Size / 1GB, 2)
-        FreeGB = [Math]::Round($disk.FreeSpace / 1GB, 2)
-        UsedGB = [Math]::Round(($disk.Size - $disk.FreeSpace) / 1GB, 2)
-        UsedPercentage = if ($disk.Size -gt 0) {
-            [Math]::Round(($disk.Size - $disk.FreeSpace) / $disk.Size * 100, 2)
-        } else { 0 }
-        VolumeName = $disk.VolumeName
-        VolumeSerialNumber = $disk.VolumeSerialNumber
-        FileSystem = $disk.FileSystem
-        DriveType = "Netzwerk-Laufwerk"
-        ProviderName = $disk.ProviderName
+    # Filtere die Zeilen, die tatsächliche Laufwerkszuordnungen enthalten
+    # Eine typische Zeile sieht so aus: "OK           Z:        \\server\share          Microsoft Windows Network"
+    $mappedDrives = $netUseOutput | Select-String "OK" | Select-String ":"
+
+    foreach ($line in $mappedDrives) {
+        # Teile die Zeile in ihre Bestandteile auf
+        $parts = $line.Line -split '\s{2,}'
+        
+        if ($parts.Count -ge 3) {
+            $driveLetter = $parts[1].Trim()
+            $remotePath = $parts[2].Trim()
+
+            # Hole detaillierte Informationen für den Laufwerksbuchstaben mit Get-PSDrive
+            # Dies ist zuverlässiger als WMI für gemappte Laufwerke
+            try {
+                $psDrive = Get-PSDrive -Name $driveLetter.Replace(":", "") -ErrorAction Stop
+
+                if ($psDrive) {
+                    $sizeGB = [Math]::Round($psDrive.Used / 1GB + $psDrive.Free / 1GB, 2)
+                    $freeGB = [Math]::Round($psDrive.Free / 1GB, 2)
+                    $usedGB = [Math]::Round($psDrive.Used / 1GB, 2)
+                    $usedPercentage = if ($sizeGB -gt 0) { [Math]::Round($usedGB / $sizeGB * 100, 2) } else { 0 }
+
+                    $driveDetails = @{
+                        DeviceID = $driveLetter
+                        SizeGB = $sizeGB
+                        FreeGB = $freeGB
+                        UsedGB = $usedGB
+                        UsedPercentage = $usedPercentage
+                        VolumeName = $psDrive.Description
+                        VolumeSerialNumber = "N/A" # Wird von Get-PSDrive nicht bereitgestellt
+                        FileSystem = $psDrive.Provider.Name
+                        DriveType = "Netzwerk-Laufwerk"
+                        ProviderName = $remotePath
+                    }
+                    $networkDrives += $driveDetails
+                }
+            } catch {
+                Write-Host "Fehler beim Abrufen der Details für Laufwerk $driveLetter : $($_.Exception.Message)" -ForegroundColor Yellow
+            }
+        }
     }
-    $networkDrives += $driveDetails
+} catch {
+    Write-Host "Fehler beim Ausführen von 'net use' oder beim Verarbeiten der Ausgabe: $($_.Exception.Message)" -ForegroundColor Red
 }
+
+# ============================================================
+# ENDE DES KORRIGIERTEN ABSCHNITTS
+# ============================================================
 
 # Cloud-Laufwerke erkennen
  $cloudDrives = @()
@@ -368,6 +404,8 @@ FileSystem = $_.FileSystem
     drives = @{
         localDrives = $localDrives
         networkDrives = $networkDrives
+        cloudDrives = $cloudDrives # Cloud-Laufwerke hinzugefügt
+        otherDrives = $otherDrives
     }
     network = $networkInfo
     status = $status
