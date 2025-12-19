@@ -142,45 +142,50 @@ try {
     # Führe 'net use' aus, um alle gemappten Laufwerke zu erhalten
     $netUseOutput = net use
 
-    # Filtere die Zeilen, die tatsächliche Laufwerkszuordnungen enthalten
-    # Eine typische Zeile sieht so aus: "OK           Z:        \\server\share          Microsoft Windows Network"
-    $mappedDrives = $netUseOutput | Select-String "OK" | Select-String ":"
+    # Iteriere durch jede Zeile der Ausgabe
+    foreach ($line in $netUseOutput) {
+        # Verwende einen regulären Ausdruck, um Zeilen mit Laufwerksbuchstaben zu finden
+        # Muster: Anfang der Zeile, Leerzeichen, ein Buchstabe, ein Doppelpunkt
+        if ($line -match "^\s*([A-Z]):\s+") {
+            $driveLetter = $matches[1] + ":"
 
-    foreach ($line in $mappedDrives) {
-        # Teile die Zeile in ihre Bestandteile auf
-        $parts = $line.Line -split '\s{2,}'
-        
-        if ($parts.Count -ge 3) {
-            $driveLetter = $parts[1].Trim()
-            $remotePath = $parts[2].Trim()
+            # Teile die Zeile in ihre Bestandteile auf, um den Remote-Pfad zu finden
+            # Die Spalten sind durch mehrere Leerzeichen getrennt
+            $parts = $line -split '\s{2,}'
+            
+            # Der Remote-Pfad ist normalerweise das dritte Element (Index 2)
+            if ($parts.Count -ge 3) {
+                $remotePath = $parts[2].Trim()
 
-            # Hole detaillierte Informationen für den Laufwerksbuchstaben mit Get-PSDrive
-            # Dies ist zuverlässiger als WMI für gemappte Laufwerke
-            try {
-                $psDrive = Get-PSDrive -Name $driveLetter.Replace(":", "") -ErrorAction Stop
+                # Hole detaillierte Informationen für den Laufwerksbuchstaben mit Get-PSDrive
+                try {
+                    # Entferne den Doppelpunkt für Get-PSDrive
+                    $psDrive = Get-PSDrive -Name $driveLetter.Replace(":", "") -ErrorAction Stop
 
-                if ($psDrive) {
-                    $sizeGB = [Math]::Round($psDrive.Used / 1GB + $psDrive.Free / 1GB, 2)
-                    $freeGB = [Math]::Round($psDrive.Free / 1GB, 2)
-                    $usedGB = [Math]::Round($psDrive.Used / 1GB, 2)
-                    $usedPercentage = if ($sizeGB -gt 0) { [Math]::Round($usedGB / $sizeGB * 100, 2) } else { 0 }
+                    if ($psDrive) {
+                        # Berechne die Größen
+                        $sizeGB = [Math]::Round(($psDrive.Used + $psDrive.Free) / 1GB, 2)
+                        $freeGB = [Math]::Round($psDrive.Free / 1GB, 2)
+                        $usedGB = [Math]::Round($psDrive.Used / 1GB, 2)
+                        $usedPercentage = if ($sizeGB -gt 0) { [Math]::Round($usedGB / $sizeGB * 100, 2) } else { 0 }
 
-                    $driveDetails = @{
-                        DeviceID = $driveLetter
-                        SizeGB = $sizeGB
-                        FreeGB = $freeGB
-                        UsedGB = $usedGB
-                        UsedPercentage = $usedPercentage
-                        VolumeName = $psDrive.Description
-                        VolumeSerialNumber = "N/A" # Wird von Get-PSDrive nicht bereitgestellt
-                        FileSystem = $psDrive.Provider.Name
-                        DriveType = "Netzwerk-Laufwerk"
-                        ProviderName = $remotePath
+                        $driveDetails = @{
+                            DeviceID = $driveLetter
+                            SizeGB = $sizeGB
+                            FreeGB = $freeGB
+                            UsedGB = $usedGB
+                            UsedPercentage = $usedPercentage
+                            VolumeName = $psDrive.Description
+                            VolumeSerialNumber = "N/A" # Wird von Get-PSDrive nicht bereitgestellt
+                            FileSystem = $psDrive.Provider.Name
+                            DriveType = "Netzwerk-Laufwerk"
+                            ProviderName = $remotePath
+                        }
+                        $networkDrives += $driveDetails
                     }
-                    $networkDrives += $driveDetails
+                } catch {
+                    Write-Host "Fehler beim Abrufen der Details für Laufwerk $driveLetter : $($_.Exception.Message)" -ForegroundColor Yellow
                 }
-            } catch {
-                Write-Host "Fehler beim Abrufen der Details für Laufwerk $driveLetter : $($_.Exception.Message)" -ForegroundColor Yellow
             }
         }
     }
