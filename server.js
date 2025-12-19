@@ -43,9 +43,6 @@ app.use((req, res, next) => {
 // Middleware zum Parsen von JSON
 app.use(express.json());
 
-// Statische Dateien aus dem 'public'-Verzeichnis
-app.use(express.static('public'));
-
 // Funktion zur Initialisierung der devices.json-Datei
 async function initializeDevicesFile() {
     try {
@@ -198,16 +195,31 @@ app.delete('/api/devices/:assetNumber', async (req, res) => {
     }
 });
 
-// Alle nicht-API GET-Requests an index.html senden
-app.get('*', (req, res, next) => {
-    if (req.method === 'GET' && 
-        !req.path.startsWith('/api/') && 
-        req.path !== '/events' &&
-        !req.path.includes('.')) {
-        res.sendFile(path.join(__dirname, 'public', 'index.html'));
-    } else {
-        next();
-    }
+// Statische Dateien aus dem 'public'-Verzeichnis
+app.use(express.static('public', {
+    index: false, // index.html nicht automatisch senden
+    extensions: ['html', 'htm'] // Nur diese Dateiendungen automatisch
+}));
+
+// GET / - Liefert die Haupt-HTML-Datei
+app.get('/', (req, res) => {
+    res.sendFile(path.join(__dirname, 'public', 'index.html'));
+});
+
+// SPA-Routing: Alle anderen GET-Requests, die nicht auf Dateien verweisen, senden index.html
+// KEINE WILDCARD-ROUTE VERWENDEN!
+app.use((req, res, next) => {
+    // Nur GET-Requests behandeln
+    if (req.method !== 'GET') return next();
+    
+    // API- und Event-Endpunkte ignorieren
+    if (req.path.startsWith('/api/') || req.path === '/events') return next();
+    
+    // Dateien mit Erweiterungen ignorieren (diese werden von express.static behandelt)
+    if (req.path.includes('.')) return next();
+    
+    // Für alle anderen Pfade index.html senden
+    res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
 // Hilfsfunktion zum Finden aller lokalen IPv4-Adressen
