@@ -25,8 +25,9 @@ if (cluster.isMaster && process.env.NODE_ENV !== 'development') {
 }
 
 const app = express();
-const PORT_HTTP = 2000;
-const PORT_HTTPS = 2001;
+const PORT_HTTP = process.env.PORT || 2000; // Standard HTTP Port
+const PORT_HTTP_80 = 80; // Port 80 für Zugriff ohne Portnummer
+const PORT_HTTPS = 443; // Standard HTTPS Port (443 statt 2001)
 const clients = [];
 
 // Pfad zur devices.json Datei im öffentlichen Verzeichnis
@@ -42,20 +43,58 @@ const sslOptions = {
 // Prüfe ob SSL Zertifikate vorhanden sind
 async function checkSSLCertificates() {
   try {
-    const keyPath = path.join(__dirname, 'ssl', 'key.pem');
-    const certPath = path.join(__dirname, 'ssl', 'cert.pem');
+    // Mehrere mögliche Pfade für Zertifikate
+    const possiblePaths = [
+      path.join(__dirname, 'ssl', 'key.pem'),
+      path.join(__dirname, 'ssl', 'private.key'),
+      path.join(__dirname, 'key.pem'),
+      path.join(__dirname, 'private.key')
+    ];
     
-    sslOptions.key = await fs.readFile(keyPath);
-    sslOptions.cert = await fs.readFile(certPath);
-    sslOptions.isHttpsAvailable = true;
-    console.log('✅ SSL Zertifikate gefunden. HTTPS wird aktiviert.');
+    const certPaths = [
+      path.join(__dirname, 'ssl', 'cert.pem'),
+      path.join(__dirname, 'ssl', 'certificate.crt'),
+      path.join(__dirname, 'cert.pem'),
+      path.join(__dirname, 'certificate.crt')
+    ];
+    
+    let keyFound = false;
+    let certFound = false;
+    
+    // Suche nach Key
+    for (const keyPath of possiblePaths) {
+      try {
+        await fs.access(keyPath);
+        sslOptions.key = await fs.readFile(keyPath);
+        keyFound = true;
+        console.log(`✅ SSL Key gefunden: ${keyPath}`);
+        break;
+      } catch (error) {
+        // Key nicht an diesem Pfad gefunden, weiter suchen
+      }
+    }
+    
+    // Suche nach Zertifikat
+    for (const certPath of certPaths) {
+      try {
+        await fs.access(certPath);
+        sslOptions.cert = await fs.readFile(certPath);
+        certFound = true;
+        console.log(`✅ SSL Zertifikat gefunden: ${certPath}`);
+        break;
+      } catch (error) {
+        // Zertifikat nicht an diesem Pfad gefunden, weiter suchen
+      }
+    }
+    
+    if (keyFound && certFound) {
+      sslOptions.isHttpsAvailable = true;
+      console.log('✅ HTTPS wird aktiviert.');
+    } else {
+      console.log('⚠️  SSL Zertifikate nicht gefunden. Nur HTTP wird verfügbar sein.');
+    }
   } catch (error) {
     console.log('⚠️  SSL Zertifikate nicht gefunden. Nur HTTP wird verfügbar sein.');
-    console.log('   Um HTTPS zu aktivieren:');
-    console.log('   1. Erstelle ein Verzeichnis "ssl" im Projektroot');
-    console.log('   2. Platziere key.pem und cert.pem darin');
-    console.log('   3. Oder generiere selbstsignierte Zertifikate mit:');
-    console.log('      openssl req -nodes -new -x509 -keyout ssl/key.pem -out ssl/cert.pem');
   }
 }
 
@@ -211,7 +250,6 @@ app.use((req, res, next) => {
   const isSafari = userAgent.includes('Safari') && !userAgent.includes('Chrome');
   
   if (isSafari) {
-    // Erweiterte CORS-Header für Safari
     res.header('Access-Control-Allow-Origin', '*');
     res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
     res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization');
@@ -261,17 +299,15 @@ app.post('/api/devices', async (req, res) => {
             devices = [];
         }
 
-        // Finde ein bestehendes Gerät anhand der eindeutigen Asset-Nummer
         const existingIndex = devices.findIndex(d => d.assetNumber === newDevice.assetNumber);
 
         if (existingIndex > -1) {
             const oldDevice = devices[existingIndex];
             
-            // Behalte bestimmte Felder aus dem alten Gerät bei
             const preservedFields = {
-                location: oldDevice.location, // Standort beibehalten
-                notes: oldDevice.notes,       // Notizen beibehalten
-                status: oldDevice.status,      // Status beibehalten
+                location: oldDevice.location,
+                notes: oldDevice.notes,
+                status: oldDevice.status,
             };
             
             devices[existingIndex] = {
@@ -388,7 +424,12 @@ app.get('/api/server-info', (req, res) => {
             rss: formatFileSize(memoryUsage.rss)
         },
         uptime: process.uptime(),
-        worker: process.pid
+        worker: process.pid,
+        ports: {
+            http: PORT_HTTP_80,
+            http_alt: PORT_HTTP,
+            https: sslOptions.isHttpsAvailable ? PORT_HTTPS : 'disabled'
+        }
     });
 });
 
@@ -420,10 +461,9 @@ async function initializeDevicesFile() {
 
 // Regelmäßige Bereinigung
 function setupCleanupIntervals() {
-    // Bereinige inaktive Verbindungen jede Minute
     setInterval(() => {
         const now = Date.now();
-        const connectionTimeout = 5 * 60 * 1000; // 5 Minuten
+        const connectionTimeout = 5 * 60 * 1000;
         
         activeConnections.forEach((info, res) => {
             if (now - info.lastActivity > connectionTimeout) {
@@ -452,40 +492,74 @@ async function startServer() {
     
     const localIps = getAllLocalIps();
     
-    // HTTP Server starten
-    const httpServer = http.createServer(app);
-    httpServer.listen(PORT_HTTP, () => {
-        console.log('==================================================');
-        console.log(`🚀 ETK Asset Management Server`);
-        console.log(`👷 Worker ${process.pid} gestartet`);
-        console.log('==================================================');
-        console.log(`🌐 HTTP Server läuft auf Port ${PORT_HTTP}`);
-        console.log('--------------------------------------------------');
-        console.log(`📍 Lokal:            http://localhost:${PORT_HTTP}`);
-        if (localIps.length) {
-            localIps.forEach(ip => console.log(`   http://${ip}:${PORT_HTTP}`));
-        }
-        console.log('==================================================');
-    });
+    // WICHTIG: Server auf Port 80 starten (benötigt Admin-Rechte!)
+    try {
+        const httpServer80 = http.createServer(app);
+        httpServer80.listen(PORT_HTTP_80, () => {
+            console.log('==================================================');
+            console.log(`🚀 ETK Asset Management Server`);
+            console.log(`👷 Worker ${process.pid} gestartet`);
+            console.log('==================================================');
+            console.log(`🌐 HTTP Server läuft auf Port ${PORT_HTTP_80} (ohne Portnummer erreichbar)`);
+            console.log('--------------------------------------------------');
+            console.log(`📍 Zugriff ohne Port:  http://10.10.10.99`);
+            if (localIps.length) {
+                localIps.forEach(ip => console.log(`   http://${ip}`));
+            }
+            console.log('==================================================');
+        });
+        
+        httpServer80.on('error', (error) => {
+            if (error.code === 'EACCES') {
+                console.log(`❌ Port ${PORT_HTTP_80} benötigt Admin-Rechte. Starte auf Port ${PORT_HTTP} statt.`);
+                startAlternativePort();
+            } else {
+                console.error('❌ HTTP Server Fehler:', error);
+            }
+        });
+        
+    } catch (error) {
+        console.error('❌ Fehler beim Starten des HTTP Servers:', error);
+        startAlternativePort();
+    }
     
     // HTTPS Server starten (falls Zertifikate vorhanden)
     if (sslOptions.isHttpsAvailable) {
-        const httpsServer = https.createServer(sslOptions, app);
-        httpsServer.listen(PORT_HTTPS, () => {
-            console.log(`🔒 HTTPS Server läuft auf Port ${PORT_HTTPS}`);
+        try {
+            const httpsServer = https.createServer(sslOptions, app);
+            httpsServer.listen(PORT_HTTPS, () => {
+                console.log(`🔒 HTTPS Server läuft auf Port ${PORT_HTTPS} (Standard HTTPS)`);
+                console.log('--------------------------------------------------');
+                console.log(`📍 Zugriff:  https://10.10.10.99`);
+                if (localIps.length) {
+                    localIps.forEach(ip => console.log(`   https://${ip}`));
+                }
+                console.log('==================================================');
+                console.log(`📊 API-Endpunkte:`);
+                console.log(`   GET    /api/devices`);
+                console.log(`   POST   /api/devices`);
+                console.log(`   PUT    /api/devices/:assetNumber`);
+                console.log(`   DELETE /api/devices/:assetNumber`);
+                console.log(`   Events /events`);
+                console.log(`   Status /api/server-info`);
+                console.log('==================================================');
+            });
+        } catch (error) {
+            console.error('❌ Fehler beim Starten des HTTPS Servers:', error);
+        }
+    }
+    
+    // Alternative Funktion für Port 2000
+    function startAlternativePort() {
+        const httpServer2000 = http.createServer(app);
+        httpServer2000.listen(PORT_HTTP, () => {
+            console.log(`🌐 HTTP Server läuft auf Port ${PORT_HTTP} (alternativer Port)`);
             console.log('--------------------------------------------------');
-            console.log(`📍 Lokal:            https://localhost:${PORT_HTTPS}`);
+            console.log(`📍 Lokal:            http://localhost:${PORT_HTTP}`);
+            console.log(`📍 Zugriff mit Port: http://10.10.10.99:${PORT_HTTP}`);
             if (localIps.length) {
-                localIps.forEach(ip => console.log(`   https://${ip}:${PORT_HTTPS}`));
+                localIps.forEach(ip => console.log(`   http://${ip}:${PORT_HTTP}`));
             }
-            console.log('==================================================');
-            console.log(`📊 API-Endpunkte:`);
-            console.log(`   GET    /api/devices`);
-            console.log(`   POST   /api/devices`);
-            console.log(`   PUT    /api/devices/:assetNumber`);
-            console.log(`   DELETE /api/devices/:assetNumber`);
-            console.log(`   Events /events`);
-            console.log(`   Status /api/server-info`);
             console.log('==================================================');
         });
     }
@@ -516,4 +590,5 @@ async function startServer() {
     });
 }
 
+// Starte den Server
 startServer().catch(console.error);
