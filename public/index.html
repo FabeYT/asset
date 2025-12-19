@@ -2672,6 +2672,71 @@ margin-top: 20px;
     }
 }
 
+/* Fügen Sie diese CSS-Stile zu Ihrem bestehenden Stylesheet hinzu */
+.password-prompt {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    text-align: center;
+    padding: 20px 0;
+}
+
+.password-icon {
+    font-size: 48px;
+    color: var(--danger);
+    margin-bottom: 20px;
+    width: 80px;
+    height: 80px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 50%;
+    background-color: rgba(245, 101, 101, 0.1);
+}
+
+.password-input-container {
+    position: relative;
+    width: 100%;
+    margin: 20px 0;
+}
+
+.password-input {
+    width: 100%;
+    padding: 12px 45px 12px 15px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    font-size: 16px;
+    background-color: var(--light-grey);
+    color: var(--text-color);
+    transition: var(--transition);
+}
+
+.password-input:focus {
+    outline: none;
+    border-color: var(--primary);
+    box-shadow: 0 0 0 3px rgba(255, 119, 0, 0.1);
+}
+
+.password-toggle {
+    position: absolute;
+    right: 15px;
+    top: 50%;
+    transform: translateY(-50%);
+    cursor: pointer;
+    color: var(--text-light-color);
+    transition: var(--transition);
+}
+
+.password-toggle:hover {
+    color: var(--primary);
+}
+
+.password-hint {
+    margin-top: 10px;
+    color: var(--text-light-color);
+    font-style: italic;
+}
+
 
 /* Zeitdiagramm-Zusammenfassung */
 .chart-summary {
@@ -3760,6 +3825,39 @@ PowerShell Script
 </div>
 </div>
 </div>
+
+<div class="modal-overlay" id="password-modal">
+    <div class="modal" style="max-width: 450px;">
+        <div class="modal-header">
+            <h2 class="modal-title">Gerät löschen</h2>
+            <button class="modal-close" id="password-modal-close-btn">&times;</button>
+        </div>
+        <div class="modal-body">
+            <div class="password-prompt">
+                <div class="password-icon">
+                    <i class="fas fa-exclamation-triangle"></i>
+                </div>
+                <p>Um das Gerät <strong id="device-to-delete-name"></strong> zu löschen, müssen Sie das Administrator-Passwort eingeben.</p>
+                <div class="password-input-container">
+                    <input type="password" class="password-input" id="delete-password-input" placeholder="Passwort eingeben">
+                    <div class="password-toggle" id="password-toggle-btn">
+                        <i class="fas fa-eye"></i>
+                    </div>
+                </div>
+                <div class="password-hint">
+                    <small>Hinweis: Das Standardpasswort ist "ETKN2025!"</small>
+                </div>
+            </div>
+        </div>
+        <div class="modal-footer">
+            <button class="btn btn-outline" id="password-cancel-btn">Abbrechen</button>
+            <button class="btn" id="password-confirm-btn" style="background-color: var(--danger);">
+                <i class="fas fa-trash"></i> Gerät löschen
+            </button>
+        </div>
+    </div>
+</div>
+
 </body>
 
 <script>
@@ -7227,10 +7325,44 @@ function downloadDevicePDF() {
     showNotification('Erfolg', 'PDF wurde erfolgreich erstellt', 'success');
 }
 
+    // Ersetzen Sie die bestehende deleteDeviceWithPassword-Funktion durch diese:
     function deleteDeviceWithPassword() {
         if (!currentDevice) return;
-        const password = prompt('Bitte geben Sie das Lösch-Passwort ein:');
+        
+        // Setze den Gerätenamen im Modal
+        document.getElementById('device-to-delete-name').textContent = 
+            `${currentDevice.assetNumber || 'Unbekannt'} - ${currentDevice.hostname || 'Unbekannt'}`;
+        
+        // Zeige das Passwort-Modal
+        document.getElementById('password-modal').classList.add('active');
+        
+        // Fokus auf das Passwortfeld setzen
+        setTimeout(() => {
+            document.getElementById('delete-password-input').focus();
+        }, 300);
+    }
+
+    // Fügen Sie diese Event-Listener am Ende Ihres setupEventListeners-Blocks hinzu:
+    // Password Modal Event Listeners
+    document.getElementById('password-modal-close-btn').addEventListener('click', () => {
+        document.getElementById('password-modal').classList.remove('active');
+        document.getElementById('delete-password-input').value = '';
+    });
+
+    document.getElementById('password-cancel-btn').addEventListener('click', () => {
+        document.getElementById('password-modal').classList.remove('active');
+        document.getElementById('delete-password-input').value = '';
+    });
+
+    document.getElementById('password-confirm-btn').addEventListener('click', () => {
+        const password = document.getElementById('delete-password-input').value;
+        
         if (password === 'ETKN2025!') {
+            // Schließe das Passwort-Modal
+            document.getElementById('password-modal').classList.remove('active');
+            document.getElementById('delete-password-input').value = '';
+            
+            // Führe die Löschoperation durch
             fetch(`/api/devices/${currentDevice.assetNumber}`, {
                 method: 'DELETE'
             })
@@ -7244,6 +7376,7 @@ function downloadDevicePDF() {
                 showNotification('Erfolg', result.message, 'success');
                 addConsoleMessage(`Gerät ${currentDevice.assetNumber} wurde gelöscht`, 'success');
                 document.getElementById('device-modal').classList.remove('active');
+                
                 // Daten neu laden und UI aktualisieren
                 loadDeviceData().then(() => {
                     if (document.getElementById('devices').classList.contains('active')) {
@@ -7255,10 +7388,47 @@ function downloadDevicePDF() {
                 console.error('Fehler:', error);
                 showNotification('Fehler', 'Gerät konnte nicht gelöscht werden', 'error');
             });
-        } else if (password !== null) {
-            showNotification('Fehler', 'Falsches Passwort', 'error');
+        } else {
+            // Zeige eine Fehlermeldung im Modal
+            const passwordInput = document.getElementById('delete-password-input');
+            passwordInput.style.borderColor = 'var(--danger)';
+            passwordInput.setAttribute('placeholder', 'Falsches Passwort!');
+            
+            // Entferne die Fehlermarkierung nach 2 Sekunden
+            setTimeout(() => {
+                passwordInput.style.borderColor = '';
+                passwordInput.setAttribute('placeholder', 'Passwort eingeben');
+            }, 2000);
+            
+            // Leere das Eingabefeld
+            passwordInput.value = '';
+            passwordInput.focus();
         }
-    }
+    });
+
+    // Passwort-Sichtbarkeit umschalten
+    document.getElementById('password-toggle-btn').addEventListener('click', function() {
+        const passwordInput = document.getElementById('delete-password-input');
+        const icon = this.querySelector('i');
+        
+        if (passwordInput.type === 'password') {
+            passwordInput.type = 'text';
+            icon.classList.remove('fa-eye');
+            icon.classList.add('fa-eye-slash');
+        } else {
+            passwordInput.type = 'password';
+            icon.classList.remove('fa-eye-slash');
+            icon.classList.add('fa-eye');
+        }
+    });
+
+    // Schließe das Modal, wenn außerhalb geklickt wird
+    document.getElementById('password-modal').addEventListener('click', function(e) {
+        if (e.target === this) {
+            this.classList.remove('active');
+            document.getElementById('delete-password-input').value = '';
+        }
+    });
 
     function clearConsole() {
         document.getElementById('console-content').innerHTML = '';
