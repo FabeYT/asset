@@ -3,13 +3,13 @@ const fs = require('fs').promises;
 const path = require('path');
 const os = require('os');
 const app = express();
-const PORT = 80; // Standard-HTTP-Port (keine Port-Angabe im Browser nötig)
+const PORT = 8080; // Port 8080 (keine Admin-Rechte nötig)
 const clients = [];
 
 // Pfad zur devices.json Datei im öffentlichen Verzeichnis
 const devicesFile = path.join(__dirname, 'public', 'devices.json');
 
-// SSE Endpunkt für Echtzeit-Kommunikation mit dem Frontend (z.B. für Console-Updates)
+// SSE Endpunkt für Echtzeit-Kommunikation mit dem Frontend
 app.get('/events', (req, res) => {
     res.setHeader('Content-Type', 'text/event-stream');
     res.setHeader('Cache-Control', 'no-cache');
@@ -28,18 +28,7 @@ function sendEventToClients(data) {
     });
 }
 
-// Funktion zum Senden einer Server-Startnachricht
-function sendServerStartMessage() {
-    const startMessage = {
-        type: 'server-status',
-        message: 'Server gestartet und bereit für Verbindungen',
-        timestamp: new Date().toISOString()
-    };
-    sendEventToClients(startMessage);
-    console.log('Server-Startnachricht an alle SSE-Clients gesendet.');
-}
-
-// Middleware für CORS (Cross-Origin Resource Sharing)
+// Middleware für CORS
 app.use((req, res, next) => {
     res.header('Access-Control-Allow-Origin', '*');
     res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization');
@@ -51,10 +40,10 @@ app.use((req, res, next) => {
     }
 });
 
-// Middleware zum Parsen von JSON-Request-Bodies
+// Middleware zum Parsen von JSON
 app.use(express.json());
 
-// Statische Dateien aus dem 'public'-Verzeichnis bereitstellen
+// Statische Dateien aus dem 'public'-Verzeichnis
 app.use(express.static('public'));
 
 // Funktion zur Initialisierung der devices.json-Datei
@@ -71,7 +60,7 @@ async function initializeDevicesFile() {
 
 // ==================== API-Endpunkte ====================
 
-// GET /api/devices - Ruft alle Geräte ab
+// GET /api/devices
 app.get('/api/devices', async (req, res) => {
     try {
         const data = await fs.readFile(devicesFile, 'utf8');
@@ -82,7 +71,7 @@ app.get('/api/devices', async (req, res) => {
     }
 });
 
-// POST /api/devices - Fügt ein neues Gerät hinzu oder aktualisiert ein bestehendes
+// POST /api/devices
 app.post('/api/devices', async (req, res) => {
     try {
         console.log('Empfangene Gerätedaten:', req.body);
@@ -101,17 +90,15 @@ app.post('/api/devices', async (req, res) => {
             devices = [];
         }
 
-        // Finde ein bestehendes Gerät anhand der eindeutigen Asset-Nummer
         const existingIndex = devices.findIndex(d => d.assetNumber === newDevice.assetNumber);
 
         if (existingIndex > -1) {
             const oldDevice = devices[existingIndex];
             
-            // Behalte bestimmte Felder aus dem alten Gerät bei
             const preservedFields = {
-                location: oldDevice.location, // Standort beibehalten
-                notes: oldDevice.notes,       // Notizen beibehalten
-                status: oldDevice.status,      // Status beibehalten
+                location: oldDevice.location,
+                notes: oldDevice.notes,
+                status: oldDevice.status,
             };
             
             devices[existingIndex] = {
@@ -149,7 +136,7 @@ app.post('/api/devices', async (req, res) => {
     }
 });
 
-// PUT /api/devices/:assetNumber - Aktualisiert ein Gerät
+// PUT /api/devices/:assetNumber
 app.put('/api/devices/:assetNumber', async (req, res) => {
     try {
         const assetNumber = req.params.assetNumber;
@@ -184,7 +171,7 @@ app.put('/api/devices/:assetNumber', async (req, res) => {
     }
 });
 
-// DELETE /api/devices/:assetNumber - Löscht ein Gerät
+// DELETE /api/devices/:assetNumber
 app.delete('/api/devices/:assetNumber', async (req, res) => {
     try {
         const assetNumber = req.params.assetNumber;
@@ -211,27 +198,13 @@ app.delete('/api/devices/:assetNumber', async (req, res) => {
     }
 });
 
-// GET / - Liefert die Haupt-HTML-Datei
-app.get('/', (req, res) => {
-    res.sendFile(path.join(__dirname, 'public', 'index.html'));
-});
-
-// Alternative Lösung für Wildcard-Route - Ohne Parameter-Problem
-// Verwende eine Middleware am Ende, die nicht übereinstimmende Routen behandelt
-// Anstatt einer Wildcard-Route verwenden wir eine 404-Fallback-Middleware
-app.use((req, res, next) => {
-    // Prüfe ob die Datei im public-Verzeichnis existiert
-    if (req.method === 'GET' && !req.path.startsWith('/api/') && req.path !== '/events') {
-        const filePath = path.join(__dirname, 'public', req.path);
-        fs.access(filePath)
-            .then(() => {
-                // Datei existiert, lasse express.static sie bedienen
-                next();
-            })
-            .catch(() => {
-                // Datei existiert nicht, sende index.html für SPA-Routing
-                res.sendFile(path.join(__dirname, 'public', 'index.html'));
-            });
+// Alle nicht-API GET-Requests an index.html senden
+app.get('*', (req, res, next) => {
+    if (req.method === 'GET' && 
+        !req.path.startsWith('/api/') && 
+        req.path !== '/events' &&
+        !req.path.includes('.')) {
+        res.sendFile(path.join(__dirname, 'public', 'index.html'));
     } else {
         next();
     }
@@ -255,52 +228,42 @@ function getAllLocalIps() {
 
 async function startServer() {
     await initializeDevicesFile();
-    const server = app.listen(PORT, () => {
+    const server = app.listen(PORT, '0.0.0.0', () => {  // Hört auf allen Netzwerkschnittstellen
         const localIps = getAllLocalIps();
         console.log('==================================================');
         console.log(`🚀 ETK Asset Management Server läuft auf Port ${PORT}`);
         console.log('==================================================');
         console.log(`📍 Im Browser aufrufen mit:`);
-        console.log(`   http://localhost`);
+        console.log(`   http://localhost:${PORT}`);
         
         if (localIps.length) {
             console.log(`🌐 Oder über Netzwerk-IP:`);
-            localIps.forEach(ip => console.log(`   http://${ip}`));
+            localIps.forEach(ip => console.log(`   http://${ip}:${PORT}`));
         } else {
             console.log('⚠️  Keine Netzwerk-IP gefunden.');
         }
         
         console.log('==================================================');
         console.log(`📊 API-Endpunkte:`);
-        console.log(`   GET    http://localhost/api/devices`);
-        console.log(`   POST   http://localhost/api/devices`);
-        console.log(`   PUT    http://localhost/api/devices/:assetNumber`);
-        console.log(`   DELETE http://localhost/api/devices/:assetNumber`);
-        console.log(`   Events http://localhost/events`);
+        console.log(`   GET    http://localhost:${PORT}/api/devices`);
+        console.log(`   POST   http://localhost:${PORT}/api/devices`);
+        console.log(`   PUT    http://localhost:${PORT}/api/devices/:assetNumber`);
+        console.log(`   DELETE http://localhost:${PORT}/api/devices/:assetNumber`);
+        console.log(`   Events http://localhost:${PORT}/events`);
         console.log('==================================================');
-        console.log('ℹ️  Hinweis: Verwende Administratorrechte (sudo) für Port 80');
+        console.log('✅ Server läuft ohne Admin-Rechte auf Port 8080');
         console.log('==================================================');
-        sendServerStartMessage();
     });
 
-    // Fehlerbehandlung für Port-Konflikte
+    // Fehlerbehandlung
     server.on('error', (err) => {
-        if (err.code === 'EACCES') {
+        if (err.code === 'EADDRINUSE') {
             console.error('==================================================');
-            console.error('❌ Fehler: Port 80 benötigt Administratorrechte!');
-            console.error('==================================================');
-            console.error('Führe den Server mit Administratorrechten aus:');
-            console.error('   Windows: Als Administrator ausführen');
-            console.error('   Linux/Mac: sudo node server.js');
-            console.error('==================================================');
-            process.exit(1);
-        } else if (err.code === 'EADDRINUSE') {
-            console.error('==================================================');
-            console.error('❌ Fehler: Port 80 ist bereits belegt!');
+            console.error(`❌ Fehler: Port ${PORT} ist bereits belegt!`);
             console.error('==================================================');
             console.error('Mögliche Lösungen:');
-            console.error('1. Anderen Dienst auf Port 80 beenden');
-            console.error('2. Server auf anderem Port starten (z.B. 8080)');
+            console.error('1. Anderen Server auf diesem Port beenden');
+            console.error('2. Anderen Port verwenden (z.B. 3000, 8000, 8081)');
             console.error('==================================================');
             process.exit(1);
         } else {
