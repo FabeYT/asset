@@ -3,13 +3,13 @@ const fs = require('fs').promises;
 const path = require('path');
 const os = require('os');
 const app = express();
-const PORT = 8080; // Port 8080 (keine Admin-Rechte nötig)
+const PORT = 2000;
 const clients = [];
 
 // Pfad zur devices.json Datei im öffentlichen Verzeichnis
 const devicesFile = path.join(__dirname, 'public', 'devices.json');
 
-// SSE Endpunkt für Echtzeit-Kommunikation mit dem Frontend
+// SSE Endpunkt für Echtzeit-Kommunikation mit dem Frontend (z.B. für Console-Updates)
 app.get('/events', (req, res) => {
     res.setHeader('Content-Type', 'text/event-stream');
     res.setHeader('Cache-Control', 'no-cache');
@@ -28,7 +28,18 @@ function sendEventToClients(data) {
     });
 }
 
-// Middleware für CORS
+// Funktion zum Senden einer Server-Startnachricht
+function sendServerStartMessage() {
+    const startMessage = {
+        type: 'server-status',
+        message: 'Server gestartet und bereit für Verbindungen',
+        timestamp: new Date().toISOString()
+    };
+    sendEventToClients(startMessage);
+    console.log('Server-Startnachricht an alle SSE-Clients gesendet.');
+}
+
+// Middleware für CORS (Cross-Origin Resource Sharing)
 app.use((req, res, next) => {
     res.header('Access-Control-Allow-Origin', '*');
     res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization');
@@ -40,8 +51,11 @@ app.use((req, res, next) => {
     }
 });
 
-// Middleware zum Parsen von JSON
+// Middleware zum Parsen von JSON-Request-Bodies
 app.use(express.json());
+
+// Statische Dateien aus dem 'public'-Verzeichnis bereitstellen
+app.use(express.static('public'));
 
 // Funktion zur Initialisierung der devices.json-Datei
 async function initializeDevicesFile() {
@@ -57,7 +71,7 @@ async function initializeDevicesFile() {
 
 // ==================== API-Endpunkte ====================
 
-// GET /api/devices
+// GET /api/devices - Ruft alle Geräte ab
 app.get('/api/devices', async (req, res) => {
     try {
         const data = await fs.readFile(devicesFile, 'utf8');
@@ -68,7 +82,7 @@ app.get('/api/devices', async (req, res) => {
     }
 });
 
-// POST /api/devices
+// POST /api/devices - Fügt ein neues Gerät hinzu oder aktualisiert ein bestehendes
 app.post('/api/devices', async (req, res) => {
     try {
         console.log('Empfangene Gerätedaten:', req.body);
@@ -87,20 +101,23 @@ app.post('/api/devices', async (req, res) => {
             devices = [];
         }
 
+        // Finde ein bestehendes Gerät anhand der eindeutigen Asset-Nummer
         const existingIndex = devices.findIndex(d => d.assetNumber === newDevice.assetNumber);
 
         if (existingIndex > -1) {
             const oldDevice = devices[existingIndex];
             
+            // Behalte bestimmte Felder aus dem alten Gerät bei
             const preservedFields = {
-                location: oldDevice.location,
-                notes: oldDevice.notes,
-                status: oldDevice.status,
+                location: oldDevice.location, // Standort beibehalten
+                notes: oldDevice.notes,       // Notizen beibehalten
+                status: oldDevice.status,      // Status beibehalten
+                // Weitere Felder können hier hinzugefügt werden, die beibehalten werden sollen
             };
             
             devices[existingIndex] = {
                 ...newDevice,
-                ...preservedFields,
+                ...preservedFields, // Überschreibe die neuen Daten mit den beibehaltenen Feldern
                 id: oldDevice.id,
                 lastModified: new Date().toISOString(),
                 modifiedBy: 'system'
@@ -133,7 +150,7 @@ app.post('/api/devices', async (req, res) => {
     }
 });
 
-// PUT /api/devices/:assetNumber
+// PUT /api/devices/:assetNumber - Aktualisiert ein Gerät
 app.put('/api/devices/:assetNumber', async (req, res) => {
     try {
         const assetNumber = req.params.assetNumber;
@@ -168,7 +185,7 @@ app.put('/api/devices/:assetNumber', async (req, res) => {
     }
 });
 
-// DELETE /api/devices/:assetNumber
+// DELETE /api/devices/:assetNumber - Löscht ein Gerät
 app.delete('/api/devices/:assetNumber', async (req, res) => {
     try {
         const assetNumber = req.params.assetNumber;
@@ -195,30 +212,8 @@ app.delete('/api/devices/:assetNumber', async (req, res) => {
     }
 });
 
-// Statische Dateien aus dem 'public'-Verzeichnis
-app.use(express.static('public', {
-    index: false, // index.html nicht automatisch senden
-    extensions: ['html', 'htm'] // Nur diese Dateiendungen automatisch
-}));
-
 // GET / - Liefert die Haupt-HTML-Datei
 app.get('/', (req, res) => {
-    res.sendFile(path.join(__dirname, 'public', 'index.html'));
-});
-
-// SPA-Routing: Alle anderen GET-Requests, die nicht auf Dateien verweisen, senden index.html
-// KEINE WILDCARD-ROUTE VERWENDEN!
-app.use((req, res, next) => {
-    // Nur GET-Requests behandeln
-    if (req.method !== 'GET') return next();
-    
-    // API- und Event-Endpunkte ignorieren
-    if (req.path.startsWith('/api/') || req.path === '/events') return next();
-    
-    // Dateien mit Erweiterungen ignorieren (diese werden von express.static behandelt)
-    if (req.path.includes('.')) return next();
-    
-    // Für alle anderen Pfade index.html senden
     res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
@@ -240,21 +235,18 @@ function getAllLocalIps() {
 
 async function startServer() {
     await initializeDevicesFile();
-    const server = app.listen(PORT, '0.0.0.0', () => {  // Hört auf allen Netzwerkschnittstellen
+    const server = app.listen(PORT, () => {
         const localIps = getAllLocalIps();
         console.log('==================================================');
         console.log(`🚀 ETK Asset Management Server läuft auf Port ${PORT}`);
         console.log('==================================================');
-        console.log(`📍 Im Browser aufrufen mit:`);
-        console.log(`   http://localhost:${PORT}`);
-        
+        console.log(`📍 Lokal:            http://localhost:${PORT}`);
         if (localIps.length) {
-            console.log(`🌐 Oder über Netzwerk-IP:`);
+            console.log(`🌐 Im Netzwerk erreichbar unter:`);
             localIps.forEach(ip => console.log(`   http://${ip}:${PORT}`));
         } else {
             console.log('⚠️  Keine Netzwerk-IP gefunden.');
         }
-        
         console.log('==================================================');
         console.log(`📊 API-Endpunkte:`);
         console.log(`   GET    http://localhost:${PORT}/api/devices`);
@@ -263,27 +255,7 @@ async function startServer() {
         console.log(`   DELETE http://localhost:${PORT}/api/devices/:assetNumber`);
         console.log(`   Events http://localhost:${PORT}/events`);
         console.log('==================================================');
-        console.log('✅ Server läuft ohne Admin-Rechte auf Port 8080');
-        console.log('==================================================');
-    });
-
-    // Fehlerbehandlung
-    server.on('error', (err) => {
-        if (err.code === 'EADDRINUSE') {
-            console.error('==================================================');
-            console.error(`❌ Fehler: Port ${PORT} ist bereits belegt!`);
-            console.error('==================================================');
-            console.error('Mögliche Lösungen:');
-            console.error('1. Anderen Server auf diesem Port beenden');
-            console.error('2. Anderen Port verwenden (z.B. 3000, 8000, 8081)');
-            console.error('==================================================');
-            process.exit(1);
-        } else {
-            console.error('==================================================');
-            console.error('❌ Unerwarteter Serverfehler:', err);
-            console.error('==================================================');
-            process.exit(1);
-        }
+        sendServerStartMessage();
     });
 
     process.on('SIGINT', () => {
@@ -303,10 +275,4 @@ async function startServer() {
     });
 }
 
-// Hauptprogramm
-try {
-    startServer().catch(console.error);
-} catch (error) {
-    console.error('❌ Fehler beim Server-Start:', error);
-    process.exit(1);
-}
+startServer().catch(console.error);
