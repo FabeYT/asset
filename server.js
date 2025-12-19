@@ -216,9 +216,25 @@ app.get('/', (req, res) => {
     res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
-// Fallback für alle anderen Routen - SPA Support
-app.get('*', (req, res) => {
-    res.sendFile(path.join(__dirname, 'public', 'index.html'));
+// Alternative Lösung für Wildcard-Route - Ohne Parameter-Problem
+// Verwende eine Middleware am Ende, die nicht übereinstimmende Routen behandelt
+// Anstatt einer Wildcard-Route verwenden wir eine 404-Fallback-Middleware
+app.use((req, res, next) => {
+    // Prüfe ob die Datei im public-Verzeichnis existiert
+    if (req.method === 'GET' && !req.path.startsWith('/api/') && req.path !== '/events') {
+        const filePath = path.join(__dirname, 'public', req.path);
+        fs.access(filePath)
+            .then(() => {
+                // Datei existiert, lasse express.static sie bedienen
+                next();
+            })
+            .catch(() => {
+                // Datei existiert nicht, sende index.html für SPA-Routing
+                res.sendFile(path.join(__dirname, 'public', 'index.html'));
+            });
+    } else {
+        next();
+    }
 });
 
 // Hilfsfunktion zum Finden aller lokalen IPv4-Adressen
