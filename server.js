@@ -3,8 +3,7 @@ const fs = require('fs').promises;
 const path = require('path');
 const os = require('os');
 const app = express();
-// 修改端口为80，这样可以直接通过IP地址访问，无需指定端口号
-const PORT = 80; 
+const PORT = 80; // Standard-HTTP-Port (keine Port-Angabe im Browser nötig)
 const clients = [];
 
 // Pfad zur devices.json Datei im öffentlichen Verzeichnis
@@ -113,12 +112,11 @@ app.post('/api/devices', async (req, res) => {
                 location: oldDevice.location, // Standort beibehalten
                 notes: oldDevice.notes,       // Notizen beibehalten
                 status: oldDevice.status,      // Status beibehalten
-                // Weitere Felder können hier hinzugefügt werden, die beibehalten werden sollen
             };
             
             devices[existingIndex] = {
                 ...newDevice,
-                ...preservedFields, // Überschreibe die neuen Daten mit den beibehaltenen Feldern
+                ...preservedFields,
                 id: oldDevice.id,
                 lastModified: new Date().toISOString(),
                 modifiedBy: 'system'
@@ -218,6 +216,11 @@ app.get('/', (req, res) => {
     res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
+// Fallback für alle anderen Routen - SPA Support
+app.get('*', (req, res) => {
+    res.sendFile(path.join(__dirname, 'public', 'index.html'));
+});
+
 // Hilfsfunktion zum Finden aller lokalen IPv4-Adressen
 function getAllLocalIps() {
     const interfaces = os.networkInterfaces();
@@ -241,13 +244,16 @@ async function startServer() {
         console.log('==================================================');
         console.log(`🚀 ETK Asset Management Server läuft auf Port ${PORT}`);
         console.log('==================================================');
-        console.log(`📍 Lokal:            http://localhost`);
+        console.log(`📍 Im Browser aufrufen mit:`);
+        console.log(`   http://localhost`);
+        
         if (localIps.length) {
-            console.log(`🌐 Im Netzwerk erreichbar unter:`);
+            console.log(`🌐 Oder über Netzwerk-IP:`);
             localIps.forEach(ip => console.log(`   http://${ip}`));
         } else {
             console.log('⚠️  Keine Netzwerk-IP gefunden.');
         }
+        
         console.log('==================================================');
         console.log(`📊 API-Endpunkte:`);
         console.log(`   GET    http://localhost/api/devices`);
@@ -256,7 +262,37 @@ async function startServer() {
         console.log(`   DELETE http://localhost/api/devices/:assetNumber`);
         console.log(`   Events http://localhost/events`);
         console.log('==================================================');
+        console.log('ℹ️  Hinweis: Verwende Administratorrechte (sudo) für Port 80');
+        console.log('==================================================');
         sendServerStartMessage();
+    });
+
+    // Fehlerbehandlung für Port-Konflikte
+    server.on('error', (err) => {
+        if (err.code === 'EACCES') {
+            console.error('==================================================');
+            console.error('❌ Fehler: Port 80 benötigt Administratorrechte!');
+            console.error('==================================================');
+            console.error('Führe den Server mit Administratorrechten aus:');
+            console.error('   Windows: Als Administrator ausführen');
+            console.error('   Linux/Mac: sudo node server.js');
+            console.error('==================================================');
+            process.exit(1);
+        } else if (err.code === 'EADDRINUSE') {
+            console.error('==================================================');
+            console.error('❌ Fehler: Port 80 ist bereits belegt!');
+            console.error('==================================================');
+            console.error('Mögliche Lösungen:');
+            console.error('1. Anderen Dienst auf Port 80 beenden');
+            console.error('2. Server auf anderem Port starten (z.B. 8080)');
+            console.error('==================================================');
+            process.exit(1);
+        } else {
+            console.error('==================================================');
+            console.error('❌ Unerwarteter Serverfehler:', err);
+            console.error('==================================================');
+            process.exit(1);
+        }
     });
 
     process.on('SIGINT', () => {
@@ -276,4 +312,10 @@ async function startServer() {
     });
 }
 
-startServer().catch(console.error);
+// Hauptprogramm
+try {
+    startServer().catch(console.error);
+} catch (error) {
+    console.error('❌ Fehler beim Server-Start:', error);
+    process.exit(1);
+}
