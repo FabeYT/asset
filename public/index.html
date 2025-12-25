@@ -2541,6 +2541,71 @@ background-color: var(--border);
     background: var(--primary-extra-light);
 }
 
+/* Modernes Layout für lokale Laufwerke */
+.local-drives-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(380px, 1fr));
+    gap: 20px;
+}
+
+.local-drive-card {
+    border-left-color: var(--primary); /* Andere Farbe zur Unterscheidung */
+}
+
+.drive-details-list {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    margin-top: 15px;
+    padding-top: 15px;
+    border-top: 1px solid var(--border);
+}
+
+.drive-detail-item {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+
+.detail-icon {
+    color: var(--primary);
+    width: 18px; /* Feste Breite für Ausrichtung */
+    text-align: center;
+    font-size: 14px;
+}
+
+.detail-content {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    width: 100%;
+    font-size: 13px;
+}
+
+.detail-label {
+    color: var(--text-light-color);
+    font-weight: 500;
+}
+
+.detail-value {
+    color: var(--text-color);
+    font-weight: 600;
+    font-family: 'Courier New', monospace; /* Gut für Seriennummern */
+}
+
+/* Responsive Anpassung für kleinere Bildschirme */
+@media (max-width: 768px) {
+    .local-drives-grid {
+        grid-template-columns: 1fr;
+    }
+    
+    .detail-content {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 2px;
+    }
+}
+
 .network-drives-table .drive-letter {
     font-weight: 600;
     color: var(--primary);
@@ -5392,7 +5457,7 @@ document.addEventListener('DOMContentLoaded', function() {
         return tabContent;
     }
 
-    // Funktion zum Erstellen des "Speicher"-Tabs - MIT STATUS-LOGIK
+    // Funktion zum Erstellen des "Speicher"-Tabs - Moderne lokale Laufwerke
     function createStorageTab(device) {
         const tabContent = document.createElement('div');
         tabContent.className = 'tab-content';
@@ -5411,18 +5476,14 @@ document.addEventListener('DOMContentLoaded', function() {
                 const driveLetter = drive.DeviceID || '';
                 const remotePath = drive.RemotePath || 'N/A';
                 
-                // === NEUE LOGIK: Status basierend auf dem RemotePath bestimmen ===
                 let statusIcon, statusColor, statusText;
-
                 if (remotePath === 'N/A' || remotePath.trim() === '') {
-                    // Wenn kein Pfad vorhanden ist, ist das Laufwerk nicht verbunden
                     statusIcon = 'fa-times-circle';
-                    statusColor = 'var(--danger)'; // Rot
+                    statusColor = 'var(--danger)';
                     statusText = 'Nicht verbunden';
                 } else {
-                    // Wenn ein Pfad vorhanden ist, ist es verbunden
                     statusIcon = 'fa-check-circle';
-                    statusColor = 'var(--success)'; // Grün
+                    statusColor = 'var(--success)';
                     statusText = drive.ConnectionType || 'Verbunden';
                 }
 
@@ -5444,7 +5505,6 @@ document.addEventListener('DOMContentLoaded', function() {
             tabContent.appendChild(networkDrivesSection);
 
         } else {
-            // Falls keine Netzlaufwerke gefunden wurden
             const noDrivesSection = document.createElement('div');
             noDrivesSection.className = 'detail-section';
             noDrivesSection.innerHTML = `
@@ -5459,29 +5519,52 @@ document.addEventListener('DOMContentLoaded', function() {
         }
 
         // ==========================================================
-        // LOKALE LAUFWERKE (Optional, weniger prominent)
+        // LOKALE LAUFWERKE - MODERNE DARSTELLUNG
         // ==========================================================
         if (device.drives && device.drives.localDrives && device.drives.localDrives.length > 0) {
             const localDrivesSection = document.createElement('div');
             localDrivesSection.className = 'detail-section';
             
-            let drivesHtml = '<h3 class="detail-section-title"><i class="fas fa-hdd"></i> Lokale Laufwerke</h3><div class="drives-grid">';
+            let drivesHtml = '<h3 class="detail-section-title"><i class="fas fa-hdd"></i> Lokale Laufwerke</h3><div class="local-drives-grid">';
 
             device.drives.localDrives.forEach((drive) => {
                 const usagePercentage = drive.SizeGB > 0 ? Math.round((drive.UsedGB / drive.SizeGB) * 100) : 0;
                 const usageColor = usagePercentage > 90 ? 'var(--danger)' : usagePercentage > 75 ? 'var(--warning)' : 'var(--success)';
                 
                 drivesHtml += `
-                    <div class="drive-card">
+                    <div class="drive-card local-drive-card">
                         <div class="drive-header">
                             <div class="drive-name">${drive.DeviceID || 'Unbekannt'}</div>
-                            <div class="drive-type"><i class="fas fa-hdd"></i> Lokal</div>
+                            <div class="drive-type"><i class="fas fa-hdd"></i> ${drive.DriveType || 'Lokale Festplatte'}</div>
                         </div>
                         <div class="drive-usage">
                             <div class="usage-bar">
                                 <div class="usage-fill" style="width: ${usagePercentage}%; background-color: ${usageColor};"></div>
                             </div>
                             <div class="usage-text">${drive.UsedGB || 0} GB / ${drive.SizeGB || 0} GB (${usagePercentage}%)</div>
+                        </div>
+                        <div class="drive-details-list">
+                            <div class="drive-detail-item">
+                                <i class="fas fa-tag detail-icon"></i>
+                                <div class="detail-content">
+                                    <span class="detail-label">Volume-Name</span>
+                                    <span class="detail-value">${drive.VolumeName || 'N/A'}</span>
+                                </div>
+                            </div>
+                            <div class="drive-detail-item">
+                                <i class="fas fa-microchip detail-icon"></i>
+                                <div class="detail-content">
+                                    <span class="detail-label">Dateisystem</span>
+                                    <span class="detail-value">${drive.FileSystem || 'N/A'}</span>
+                                </div>
+                            </div>
+                            <div class="drive-detail-item">
+                                <i class="fas fa-barcode detail-icon"></i>
+                                <div class="detail-content">
+                                    <span class="detail-label">Seriennummer</span>
+                                    <span class="detail-value">${drive.VolumeSerialNumber || 'N/A'}</span>
+                                </div>
+                            </div>
                         </div>
                     </div>
                 `;
