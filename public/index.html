@@ -2453,6 +2453,97 @@ width: 2px;
 background-color: var(--border);
 }
 
+/* Netzlaufwerke-Tabelle */
+.network-drives-overview {
+    margin-bottom: 20px;
+    background: var(--card-bg);
+    border-radius: var(--border-radius);
+    overflow: hidden;
+    box-shadow: var(--card-shadow);
+}
+
+.network-drives-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 14px;
+}
+
+.network-drives-table th {
+    background: var(--primary);
+    color: white;
+    padding: 12px 15px;
+    text-align: left;
+    font-weight: 600;
+    font-size: 13px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.network-drives-table td {
+    padding: 12px 15px;
+    border-bottom: 1px solid var(--border);
+    vertical-align: middle;
+}
+
+.network-drives-table tr:hover {
+    background: var(--primary-extra-light);
+}
+
+.network-drives-table .drive-letter {
+    font-weight: 600;
+    color: var(--primary);
+    font-family: 'Courier New', monospace;
+    font-size: 16px;
+    width: 80px;
+}
+
+.network-drives-table .drive-path {
+    font-family: 'Courier New', monospace;
+    font-size: 13px;
+    color: var(--text-color);
+    word-break: break-all;
+}
+
+.network-drives-table .drive-status {
+    font-weight: 500;
+    width: 100px;
+}
+
+.network-drives-table .drive-status.connected {
+    color: var(--success);
+}
+
+.network-drives-table .drive-status.disconnected {
+    color: var(--text-light-color);
+}
+
+.network-drives-table .drive-size {
+    text-align: right;
+    font-weight: 500;
+    width: 120px;
+}
+
+/* Responsive Anpassungen für die Netzlaufwerk-Tabelle */
+@media (max-width: 768px) {
+    .network-drives-table {
+        font-size: 12px;
+    }
+    
+    .network-drives-table th,
+    .network-drives-table td {
+        padding: 8px 10px;
+    }
+    
+    .network-drives-table .drive-letter {
+        font-size: 14px;
+        width: 60px;
+    }
+    
+    .network-drives-table .drive-path {
+        font-size: 11px;
+    }
+}
+
 .history-item {
 position: relative;
 padding-bottom: 20px;
@@ -5296,22 +5387,53 @@ document.addEventListener('DOMContentLoaded', function() {
             tabContent.appendChild(localDrivesSection);
         }
 
-        // Netzlaufwerke
+        // Netzlaufwerke - ANGEPASST für bessere Anzeige
         if (device.networkDrives && device.networkDrives.length > 0) {
             const networkDrivesSection = document.createElement('div');
             networkDrivesSection.className = 'detail-section';
             
-            let drivesHtml = '<h3 class="detail-section-title"><i class="fas fa-network-wired"></i> Netzlaufwerke</h3><div class="network-drives-grid">';
-
+            let drivesHtml = '<h3 class="detail-section-title"><i class="fas fa-network-wired"></i> Netzlaufwerke</h3>';
+            
+            // Zuerst eine Übersichtstabelle mit allen Netzlaufwerken
+            drivesHtml += '<div class="network-drives-overview">';
+            drivesHtml += '<table class="network-drives-table">';
+            drivesHtml += '<thead><tr><th>Laufwerk</th><th>Pfad</th><th>Status</th><th>Größe</th></tr></thead>';
+            drivesHtml += '<tbody>';
+            
+            device.networkDrives.forEach((drive, index) => {
+                const driveLetter = drive.DeviceID || '';
+                const remotePath = drive.RemotePath || 'N/A';
+                const volumeName = drive.VolumeName || '';
+                const status = drive.SizeGB !== 'N/A' ? 'Verbunden' : 'Nicht verbunden';
+                const statusClass = drive.SizeGB !== 'N/A' ? 'connected' : 'disconnected';
+                const sizeInfo = drive.SizeGB !== 'N/A' ? `${drive.UsedGB || 0} GB / ${drive.SizeGB || 0} GB` : 'N/A';
+                
+                drivesHtml += `
+                    <tr>
+                        <td class="drive-letter">${driveLetter}</td>
+                        <td class="drive-path">${remotePath}</td>
+                        <td class="drive-status ${statusClass}">${status}</td>
+                        <td class="drive-size">${sizeInfo}</td>
+                    </tr>
+                `;
+            });
+            
+            drivesHtml += '</tbody></table></div>';
+            
+            // Dann detaillierte Karten für jedes Netzlaufwerk
+            drivesHtml += '<div class="network-drives-grid">';
+            
             device.networkDrives.forEach((drive, index) => {
                 const networkIcon = getNetworkIcon(drive.ProviderName);
                 const usagePercentage = drive.SizeGB > 0 ? Math.round((drive.UsedGB / drive.SizeGB) * 100) : 0;
                 const usageColor = usagePercentage > 90 ? 'var(--danger)' : usagePercentage > 75 ? 'var(--warning)' : 'var(--success)';
+                const driveLetter = drive.DeviceID || '';
+                const remotePath = drive.RemotePath || 'N/A';
 
                 drivesHtml += `
                     <div class="drive-card">
                         <div class="drive-header">
-                            <div class="drive-name">${drive.DeviceID || 'Unbekanntes Laufwerk'}</div>
+                            <div class="drive-name">${driveLetter}:: ${remotePath}</div>
                             <div class="drive-type">${networkIcon} Netzlaufwerk</div>
                         </div>
                         <div class="drive-usage">
@@ -5322,12 +5444,20 @@ document.addEventListener('DOMContentLoaded', function() {
                         </div>
                         <div class="drive-details">
                             <div class="drive-detail">
-                                <div class="detail-label">Pfad</div>
-                                <div class="detail-value">${drive.RemotePath || 'N/A'}</div>
+                                <div class="detail-label">Laufwerksbuchstabe</div>
+                                <div class="detail-value">${driveLetter}</div>
+                            </div>
+                            <div class="drive-detail">
+                                <div class="detail-label">UNC-Pfad</div>
+                                <div class="detail-value">${remotePath}</div>
                             </div>
                             <div class="drive-detail">
                                 <div class="detail-label">Volume-Name</div>
                                 <div class="detail-value">${drive.VolumeName || 'N/A'}</div>
+                            </div>
+                            <div class="drive-detail">
+                                <div class="detail-label">Anbieter</div>
+                                <div class="detail-value">${drive.ProviderName || 'N/A'}</div>
                             </div>
                         </div>
                     </div>
