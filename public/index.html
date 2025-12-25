@@ -5392,42 +5392,40 @@ document.addEventListener('DOMContentLoaded', function() {
         return tabContent;
     }
 
-    // Funktion zum Erstellen des "Speicher"-Tabs - Zeigt Netzlaufwerke prominent an
+    // Funktion zum Erstellen des "Speicher"-Tabs - FINALE VERSION
     function createStorageTab(device) {
         const tabContent = document.createElement('div');
         tabContent.className = 'tab-content';
 
-        // Netzlaufwerke - HAUPTFOKUS
-        if (device.networkDrives && device.networkDrives.length > 0) {
+        // ==========================================================
+        // NETZLAUFWERKE - HAUPTFOKUS
+        // ==========================================================
+        // WICHTIG: Die Daten sind in device.drives.networkDrives gespeichert!
+        if (device.drives && device.drives.networkDrives && device.drives.networkDrives.length > 0) {
             const networkDrivesSection = document.createElement('div');
             networkDrivesSection.className = 'detail-section';
             
-            // Überschrift
             let drivesHtml = '<h3 class="detail-section-title"><i class="fas fa-network-wired"></i> Netzlaufwerke</h3>';
-            
-            // Eine einfache, klare Liste im gewünschten Format
             drivesHtml += '<div class="network-drives-list">';
             
-            device.networkDrives.forEach((drive, index) => {
+            device.drives.networkDrives.forEach((drive) => {
                 const driveLetter = drive.DeviceID || '';
                 const remotePath = drive.RemotePath || 'N/A';
                 
-                // Status bestimmen, falls vorhanden
-                let statusHtml = '';
-                if (drive.ConnectionType) {
-                    const statusIcon = 'fa-check-circle'; // Annahme: immer verbunden
-                    const statusColor = 'var(--success)';
-                    statusHtml = `<div class="network-drive-status" style="color: ${statusColor};"><i class="fas ${statusIcon}"></i> ${drive.ConnectionType}</div>`;
-                }
-                
-                // Zeigt das Format an: H:: \\etkn.de\ETK\Homes\fsansone
+                // Status-Icon und Farbe bestimmen
+                const statusIcon = 'fa-check-circle'; // Immer als verbunden annehmen
+                const statusColor = 'var(--success)';
+                const statusText = drive.ConnectionType || 'Verbunden';
+
                 drivesHtml += `
                     <div class="network-drive-item">
                         <div class="network-drive-path">
                             <span class="drive-letter">${driveLetter}</span>::
                             <span class="drive-unc-path">${remotePath}</span>
                         </div>
-                        ${statusHtml}
+                        <div class="network-drive-status" style="color: ${statusColor};">
+                            <i class="fas ${statusIcon}"></i> ${statusText}
+                        </div>
                     </div>
                 `;
             });
@@ -5435,6 +5433,7 @@ document.addEventListener('DOMContentLoaded', function() {
             drivesHtml += '</div>';
             networkDrivesSection.innerHTML = drivesHtml;
             tabContent.appendChild(networkDrivesSection);
+
         } else {
             // Falls keine Netzlaufwerke gefunden wurden
             const noDrivesSection = document.createElement('div');
@@ -5450,21 +5449,23 @@ document.addEventListener('DOMContentLoaded', function() {
             tabContent.appendChild(noDrivesSection);
         }
 
-        // Optional: Lokale Laufwerke darunter anzeigen (aber weniger prominent)
+        // ==========================================================
+        // LOKALE LAUFWERKE (Optional, weniger prominent)
+        // ==========================================================
         if (device.drives && device.drives.localDrives && device.drives.localDrives.length > 0) {
             const localDrivesSection = document.createElement('div');
             localDrivesSection.className = 'detail-section';
             
             let drivesHtml = '<h3 class="detail-section-title"><i class="fas fa-hdd"></i> Lokale Laufwerke</h3><div class="drives-grid">';
 
-            device.drives.localDrives.forEach((drive, index) => {
+            device.drives.localDrives.forEach((drive) => {
                 const usagePercentage = drive.SizeGB > 0 ? Math.round((drive.UsedGB / drive.SizeGB) * 100) : 0;
                 const usageColor = usagePercentage > 90 ? 'var(--danger)' : usagePercentage > 75 ? 'var(--warning)' : 'var(--success)';
                 
                 drivesHtml += `
                     <div class="drive-card">
                         <div class="drive-header">
-                            <div class="drive-name">${drive.DeviceID || 'Unbekanntes Laufwerk'}</div>
+                            <div class="drive-name">${drive.DeviceID || 'Unbekannt'}</div>
                             <div class="drive-type"><i class="fas fa-hdd"></i> Lokal</div>
                         </div>
                         <div class="drive-usage">

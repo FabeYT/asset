@@ -124,25 +124,37 @@ app.post('/api/devices', async (req, res) => {
         if (existingIndex > -1) {
             const oldDevice = devices[existingIndex];
             
-            const preservedFields = {
-                location: oldDevice.location,
-                notes: oldDevice.notes,
-                status: oldDevice.status,
+            // WICHTIG: Laufwerksdaten zusammenführen
+            const mergedDrives = {
+                localDrives: newDevice.drives?.localDrives || [],
+                otherDrives: newDevice.drives?.otherDrives || [],
+                networkDrives: newDevice.drives?.networkDrives || [] // Die neuen Netzlaufwerke vom Skript
             };
             
             devices[existingIndex] = {
-                ...newDevice,
-                ...preservedFields,
+                ...oldDevice, // Behalte alte Metadaten wie location, notes, status
+                ...newDevice, // Überschrebe mit allen neuen Daten
                 id: oldDevice.id,
+                drives: mergedDrives, // Setze die zusammengeführten Laufwerksdaten
                 lastModified: new Date().toISOString(),
                 modifiedBy: 'system'
             };
             
             console.log(`Gerät aktualisiert: ${newDevice.assetNumber || newDevice.hostname}`);
+            console.log(`Netzlaufwerke gespeichert: ${mergedDrives.networkDrives.length}`);
             res.status(200).json({ message: 'Gerät erfolgreich aktualisiert', device: devices[existingIndex] });
         } else {
+            // Neues Gerät: Stelle sicher, dass die drives-Struktur existiert
+            if (!newDevice.drives) {
+                newDevice.drives = {
+                    localDrives: [],
+                    otherDrives: [],
+                    networkDrives: []
+                };
+            }
             devices.push(newDevice);
             console.log(`Neues Gerät hinzugefügt: ${newDevice.assetNumber || newDevice.hostname}`);
+            console.log(`Netzlaufwerke gespeichert: ${newDevice.drives.networkDrives.length}`);
             res.status(201).json({ message: 'Gerät erfolgreich hinzugefügt', device: newDevice });
         }
 
