@@ -5415,6 +5415,20 @@ document.addEventListener('DOMContentLoaded', function() {
         }
     }
 
+    // Hilfsfunktion zum Abrufen des Netzwerk-Icons
+    function getNetworkIcon(provider) {
+        switch (provider) {
+            case 'Microsoft Windows Network':
+                return '<i class="fab fa-windows"></i>';
+            case 'Microsoft Terminal Services':
+                return '<i class="fas fa-desktop"></i>';
+            case 'WebDAV':
+                return '<i class="fas fa-globe"></i>';
+            default:
+                return '<i class="fas fa-server"></i>';
+        }
+    }
+
     // Funktion zum Erstellen des "Netzwerk"-Tabs
     function createNetworkTab(device) {
         const tabContent = document.createElement('div');
