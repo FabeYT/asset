@@ -5398,6 +5398,40 @@ document.addEventListener('DOMContentLoaded', function() {
         tabContent.className = 'tab-content';
 
         // ==========================================================
+        // LOKALE LAUFWERKE (Optional, weniger prominent)
+        // ==========================================================
+        if (device.drives && device.drives.localDrives && device.drives.localDrives.length > 0) {
+            const localDrivesSection = document.createElement('div');
+            localDrivesSection.className = 'detail-section';
+            
+            let drivesHtml = '<h3 class="detail-section-title"><i class="fas fa-hdd"></i> Lokale Laufwerke</h3><div class="drives-grid">';
+
+            device.drives.localDrives.forEach((drive) => {
+                const usagePercentage = drive.SizeGB > 0 ? Math.round((drive.UsedGB / drive.SizeGB) * 100) : 0;
+                const usageColor = usagePercentage > 90 ? 'var(--danger)' : usagePercentage > 75 ? 'var(--warning)' : 'var(--success)';
+                
+                drivesHtml += `
+                    <div class="drive-card">
+                        <div class="drive-header">
+                            <div class="drive-name">${drive.DeviceID || 'Unbekannt'}</div>
+                            <div class="drive-type"><i class="fas fa-hdd"></i> Lokal</div>
+                        </div>
+                        <div class="drive-usage">
+                            <div class="usage-bar">
+                                <div class="usage-fill" style="width: ${usagePercentage}%; background-color: ${usageColor};"></div>
+                            </div>
+                            <div class="usage-text">${drive.UsedGB || 0} GB / ${drive.SizeGB || 0} GB (${usagePercentage}%)</div>
+                        </div>
+                    </div>
+                `;
+            });
+
+            drivesHtml += '</div>';
+            localDrivesSection.innerHTML = drivesHtml;
+            tabContent.appendChild(localDrivesSection);
+        }
+
+        // ==========================================================
         // NETZLAUFWERKE - HAUPTFOKUS
         // ==========================================================
         // WICHTIG: Die Daten sind in device.drives.networkDrives gespeichert!
@@ -5447,40 +5481,6 @@ document.addEventListener('DOMContentLoaded', function() {
                 </div>
             `;
             tabContent.appendChild(noDrivesSection);
-        }
-
-        // ==========================================================
-        // LOKALE LAUFWERKE (Optional, weniger prominent)
-        // ==========================================================
-        if (device.drives && device.drives.localDrives && device.drives.localDrives.length > 0) {
-            const localDrivesSection = document.createElement('div');
-            localDrivesSection.className = 'detail-section';
-            
-            let drivesHtml = '<h3 class="detail-section-title"><i class="fas fa-hdd"></i> Lokale Laufwerke</h3><div class="drives-grid">';
-
-            device.drives.localDrives.forEach((drive) => {
-                const usagePercentage = drive.SizeGB > 0 ? Math.round((drive.UsedGB / drive.SizeGB) * 100) : 0;
-                const usageColor = usagePercentage > 90 ? 'var(--danger)' : usagePercentage > 75 ? 'var(--warning)' : 'var(--success)';
-                
-                drivesHtml += `
-                    <div class="drive-card">
-                        <div class="drive-header">
-                            <div class="drive-name">${drive.DeviceID || 'Unbekannt'}</div>
-                            <div class="drive-type"><i class="fas fa-hdd"></i> Lokal</div>
-                        </div>
-                        <div class="drive-usage">
-                            <div class="usage-bar">
-                                <div class="usage-fill" style="width: ${usagePercentage}%; background-color: ${usageColor};"></div>
-                            </div>
-                            <div class="usage-text">${drive.UsedGB || 0} GB / ${drive.SizeGB || 0} GB (${usagePercentage}%)</div>
-                        </div>
-                    </div>
-                `;
-            });
-
-            drivesHtml += '</div>';
-            localDrivesSection.innerHTML = drivesHtml;
-            tabContent.appendChild(localDrivesSection);
         }
 
         return tabContent;
