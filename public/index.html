@@ -5392,10 +5392,71 @@ document.addEventListener('DOMContentLoaded', function() {
         return tabContent;
     }
 
-    // Funktion zum Erstellen des "Speicher"-Tabs - FINALE VERSION
+    // Funktion zum Erstellen des "Speicher"-Tabs - MIT STATUS-LOGIK
     function createStorageTab(device) {
         const tabContent = document.createElement('div');
         tabContent.className = 'tab-content';
+
+        // ==========================================================
+        // NETZLAUFWERKE - HAUPTFOKUS
+        // ==========================================================
+        if (device.drives && device.drives.networkDrives && device.drives.networkDrives.length > 0) {
+            const networkDrivesSection = document.createElement('div');
+            networkDrivesSection.className = 'detail-section';
+            
+            let drivesHtml = '<h3 class="detail-section-title"><i class="fas fa-network-wired"></i> Netzlaufwerke</h3>';
+            drivesHtml += '<div class="network-drives-list">';
+            
+            device.drives.networkDrives.forEach((drive) => {
+                const driveLetter = drive.DeviceID || '';
+                const remotePath = drive.RemotePath || 'N/A';
+                
+                // === NEUE LOGIK: Status basierend auf dem RemotePath bestimmen ===
+                let statusIcon, statusColor, statusText;
+
+                if (remotePath === 'N/A' || remotePath.trim() === '') {
+                    // Wenn kein Pfad vorhanden ist, ist das Laufwerk nicht verbunden
+                    statusIcon = 'fa-times-circle';
+                    statusColor = 'var(--danger)'; // Rot
+                    statusText = 'Nicht verbunden';
+                } else {
+                    // Wenn ein Pfad vorhanden ist, ist es verbunden
+                    statusIcon = 'fa-check-circle';
+                    statusColor = 'var(--success)'; // Grün
+                    statusText = drive.ConnectionType || 'Verbunden';
+                }
+
+                drivesHtml += `
+                    <div class="network-drive-item">
+                        <div class="network-drive-path">
+                            <span class="drive-letter">${driveLetter}</span>::
+                            <span class="drive-unc-path">${remotePath}</span>
+                        </div>
+                        <div class="network-drive-status" style="color: ${statusColor};">
+                            <i class="fas ${statusIcon}"></i> ${statusText}
+                        </div>
+                    </div>
+                `;
+            });
+            
+            drivesHtml += '</div>';
+            networkDrivesSection.innerHTML = drivesHtml;
+            tabContent.appendChild(networkDrivesSection);
+
+        } else {
+            // Falls keine Netzlaufwerke gefunden wurden
+            const noDrivesSection = document.createElement('div');
+            noDrivesSection.className = 'detail-section';
+            noDrivesSection.innerHTML = `
+                <h3 class="detail-section-title"><i class="fas fa-network-wired"></i> Netzlaufwerke</h3>
+                <div class="no-data">
+                    <i class="fas fa-network-wired"></i>
+                    <h3>Keine Netzwerklaufwerke erkannt</h3>
+                    <p>Es konnten keine gemappten Netzlaufwerke auf diesem Gerät gefunden werden.</p>
+                </div>
+            `;
+            tabContent.appendChild(noDrivesSection);
+        }
 
         // ==========================================================
         // LOKALE LAUFWERKE (Optional, weniger prominent)
@@ -5429,58 +5490,6 @@ document.addEventListener('DOMContentLoaded', function() {
             drivesHtml += '</div>';
             localDrivesSection.innerHTML = drivesHtml;
             tabContent.appendChild(localDrivesSection);
-        }
-
-        // ==========================================================
-        // NETZLAUFWERKE - HAUPTFOKUS
-        // ==========================================================
-        // WICHTIG: Die Daten sind in device.drives.networkDrives gespeichert!
-        if (device.drives && device.drives.networkDrives && device.drives.networkDrives.length > 0) {
-            const networkDrivesSection = document.createElement('div');
-            networkDrivesSection.className = 'detail-section';
-            
-            let drivesHtml = '<h3 class="detail-section-title"><i class="fas fa-network-wired"></i> Netzlaufwerke</h3>';
-            drivesHtml += '<div class="network-drives-list">';
-            
-            device.drives.networkDrives.forEach((drive) => {
-                const driveLetter = drive.DeviceID || '';
-                const remotePath = drive.RemotePath || 'N/A';
-                
-                // Status-Icon und Farbe bestimmen
-                const statusIcon = 'fa-check-circle'; // Immer als verbunden annehmen
-                const statusColor = 'var(--success)';
-                const statusText = drive.ConnectionType || 'Verbunden';
-
-                drivesHtml += `
-                    <div class="network-drive-item">
-                        <div class="network-drive-path">
-                            <span class="drive-letter">${driveLetter}</span>::
-                            <span class="drive-unc-path">${remotePath}</span>
-                        </div>
-                        <div class="network-drive-status" style="color: ${statusColor};">
-                            <i class="fas ${statusIcon}"></i> ${statusText}
-                        </div>
-                    </div>
-                `;
-            });
-            
-            drivesHtml += '</div>';
-            networkDrivesSection.innerHTML = drivesHtml;
-            tabContent.appendChild(networkDrivesSection);
-
-        } else {
-            // Falls keine Netzlaufwerke gefunden wurden
-            const noDrivesSection = document.createElement('div');
-            noDrivesSection.className = 'detail-section';
-            noDrivesSection.innerHTML = `
-                <h3 class="detail-section-title"><i class="fas fa-network-wired"></i> Netzlaufwerke</h3>
-                <div class="no-data">
-                    <i class="fas fa-network-wired"></i>
-                    <h3>Keine Netzwerklaufwerke erkannt</h3>
-                    <p>Es konnten keine gemappten Netzlaufwerke auf diesem Gerät gefunden werden.</p>
-                </div>
-            `;
-            tabContent.appendChild(noDrivesSection);
         }
 
         return tabContent;
