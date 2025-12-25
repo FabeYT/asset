@@ -5249,31 +5249,85 @@ document.addEventListener('DOMContentLoaded', function() {
         return tabContent;
     }
 
-    // Funktion zum Erstellen des "Speicher"-Tabs - Nur Netzlaufwerke
+    // Funktion zum Erstellen des "Speicher"-Tabs - Jetzt mit allen Laufwerkstypen
     function createStorageTab(device) {
         const tabContent = document.createElement('div');
         tabContent.className = 'tab-content';
 
-        // Nur Netzlaufwerke anzeigen
-        let networkDrivesSection = document.createElement('div');
-        networkDrivesSection.className = 'detail-section';
+        // Lokale Laufwerke
+        if (device.drives && device.drives.localDrives && device.drives.localDrives.length > 0) {
+            const localDrivesSection = document.createElement('div');
+            localDrivesSection.className = 'detail-section';
+            
+            let drivesHtml = '<h3 class="detail-section-title"><i class="fas fa-hdd"></i> Lokale Laufwerke</h3><div class="drives-grid">';
 
+            device.drives.localDrives.forEach((drive, index) => {
+                const usagePercentage = drive.SizeGB > 0 ? Math.round((drive.UsedGB / drive.SizeGB) * 100) : 0;
+                const usageColor = usagePercentage > 90 ? 'var(--danger)' : usagePercentage > 75 ? 'var(--warning)' : 'var(--success)';
+                
+                drivesHtml += `
+                    <div class="drive-card">
+                        <div class="drive-header">
+                            <div class="drive-name">${drive.DeviceID || 'Unbekanntes Laufwerk'}</div>
+                            <div class="drive-type"><i class="fas fa-hdd"></i> Lokales Laufwerk</div>
+                        </div>
+                        <div class="drive-usage">
+                            <div class="usage-bar">
+                                <div class="usage-fill" style="width: ${usagePercentage}%; background-color: ${usageColor};"></div>
+                            </div>
+                            <div class="usage-text">${drive.UsedGB || 0} GB / ${drive.SizeGB || 0} GB (${usagePercentage}%)</div>
+                        </div>
+                        <div class="drive-details">
+                            <div class="drive-detail">
+                                <div class="detail-label">Volume-Name</div>
+                                <div class="detail-value">${drive.VolumeName || 'N/A'}</div>
+                            </div>
+                            <div class="drive-detail">
+                                <div class="detail-label">Dateisystem</div>
+                                <div class="detail-value">${drive.FileSystem || 'N/A'}</div>
+                            </div>
+                        </div>
+                    </div>
+                `;
+            });
+
+            drivesHtml += '</div>';
+            localDrivesSection.innerHTML = drivesHtml;
+            tabContent.appendChild(localDrivesSection);
+        }
+
+        // Netzlaufwerke
         if (device.networkDrives && device.networkDrives.length > 0) {
+            const networkDrivesSection = document.createElement('div');
+            networkDrivesSection.className = 'detail-section';
+            
             let drivesHtml = '<h3 class="detail-section-title"><i class="fas fa-network-wired"></i> Netzlaufwerke</h3><div class="network-drives-grid">';
 
             device.networkDrives.forEach((drive, index) => {
                 const networkIcon = getNetworkIcon(drive.ProviderName);
+                const usagePercentage = drive.SizeGB > 0 ? Math.round((drive.UsedGB / drive.SizeGB) * 100) : 0;
+                const usageColor = usagePercentage > 90 ? 'var(--danger)' : usagePercentage > 75 ? 'var(--warning)' : 'var(--success)';
 
                 drivesHtml += `
-                    <div class="network-drive-card">
-                        <div class="network-drive-header">
-                            <div class="network-drive-name">${drive.DeviceID || 'Unbekanntes Laufwerk'}</div>
-                            <div class="network-drive-type">${networkIcon} Netzlaufwerk</div>
+                    <div class="drive-card">
+                        <div class="drive-header">
+                            <div class="drive-name">${drive.DeviceID || 'Unbekanntes Laufwerk'}</div>
+                            <div class="drive-type">${networkIcon} Netzlaufwerk</div>
                         </div>
-                        <div class="network-drive-details">
-                            <div class="network-drive-detail">
+                        <div class="drive-usage">
+                            <div class="usage-bar">
+                                <div class="usage-fill" style="width: ${usagePercentage}%; background-color: ${usageColor};"></div>
+                            </div>
+                            <div class="usage-text">${drive.UsedGB || 0} GB / ${drive.SizeGB || 0} GB (${usagePercentage}%)</div>
+                        </div>
+                        <div class="drive-details">
+                            <div class="drive-detail">
                                 <div class="detail-label">Pfad</div>
                                 <div class="detail-value">${drive.RemotePath || 'N/A'}</div>
+                            </div>
+                            <div class="drive-detail">
+                                <div class="detail-label">Volume-Name</div>
+                                <div class="detail-value">${drive.VolumeName || 'N/A'}</div>
                             </div>
                         </div>
                     </div>
@@ -5282,28 +5336,82 @@ document.addEventListener('DOMContentLoaded', function() {
 
             drivesHtml += '</div>';
             networkDrivesSection.innerHTML = drivesHtml;
-        } else {
-            networkDrivesSection.innerHTML = `
-                <h3 class="detail-section-title"><i class="fas fa-network-wired"></i> Netzlaufwerke</h3>
-                <div class="no-data">Keine Netzlaufwerke gefunden</div>
-            `;
+            tabContent.appendChild(networkDrivesSection);
         }
 
-        tabContent.appendChild(networkDrivesSection);
+        // Cloud-Laufwerke
+        if (device.drives && device.drives.cloudDrives && device.drives.cloudDrives.length > 0) {
+            const cloudDrivesSection = document.createElement('div');
+            cloudDrivesSection.className = 'detail-section';
+            
+            let drivesHtml = '<h3 class="detail-section-title"><i class="fas fa-cloud"></i> Cloud-Laufwerke</h3><div class="drives-grid">';
+
+            device.drives.cloudDrives.forEach((drive, index) => {
+                const cloudIcon = getCloudIcon(drive.CloudProvider);
+                const syncStatusColor = drive.SyncStatus === 'Aktiv' ? 'var(--success)' : 'var(--warning)';
+
+                drivesHtml += `
+                    <div class="drive-card cloud-drive">
+                        <div class="drive-header">
+                            <div class="drive-name">${drive.CloudProvider || 'Unbekannter Anbieter'}</div>
+                            <div class="drive-type">${cloudIcon} Cloud-Laufwerk</div>
+                        </div>
+                        <div class="drive-details">
+                            <div class="drive-detail">
+                                <div class="detail-label">Sync-Status</div>
+                                <div class="detail-value" style="color: ${syncStatusColor};">${drive.SyncStatus || 'N/A'}</div>
+                            </div>
+                            <div class="drive-detail">
+                                <div class="detail-label">Konto</div>
+                                <div class="detail-value">${drive.AccountEmail || 'N/A'}</div>
+                            </div>
+                            <div class="drive-detail">
+                                <div class="detail-label">Installationspfad</div>
+                                <div class="detail-value">${drive.InstallPath || 'N/A'}</div>
+                            </div>
+                        </div>
+                    </div>
+                `;
+            });
+
+            drivesHtml += '</div>';
+            cloudDrivesSection.innerHTML = drivesHtml;
+            tabContent.appendChild(cloudDrivesSection);
+        }
+
+        // Wenn keine Laufwerke gefunden wurden
+        if ((!device.drives || !device.drives.localDrives || device.drives.localDrives.length === 0) &&
+            (!device.networkDrives || device.networkDrives.length === 0) &&
+            (!device.drives || !device.drives.cloudDrives || device.drives.cloudDrives.length === 0)) {
+            const noDrivesSection = document.createElement('div');
+            noDrivesSection.className = 'detail-section';
+            noDrivesSection.innerHTML = `
+                <h3 class="detail-section-title"><i class="fas fa-hdd"></i> Speicher</h3>
+                <div class="no-data">
+                    <i class="fas fa-hdd"></i>
+                    <h3>Keine Laufwerksinformationen verfügbar</h3>
+                    <p>Es konnten keine Informationen zu lokalen, Netzwerk- oder Cloud-Laufwerken gefunden werden.</p>
+                </div>
+            `;
+            tabContent.appendChild(noDrivesSection);
+        }
+
         return tabContent;
     }
 
-    // Hilfsfunktion zum Abrufen des Netzwerk-Icons
-    function getNetworkIcon(provider) {
+    // Hilfsfunktion zum Abrufen des Cloud-Icons
+    function getCloudIcon(provider) {
         switch (provider) {
-            case 'Microsoft Windows Network':
-                return '<i class="fab fa-windows"></i>';
-            case 'Microsoft Terminal Services':
-                return '<i class="fas fa-desktop"></i>';
-            case 'WebDAV':
-                return '<i class="fas fa-globe"></i>';
+            case 'Microsoft OneDrive':
+                return '<i class="fab fa-microsoft"></i>';
+            case 'Google Drive':
+                return '<i class="fab fa-google-drive"></i>';
+            case 'Dropbox':
+                return '<i class="fab fa-dropbox"></i>';
+            case 'Apple iCloud':
+                return '<i class="fab fa-apple"></i>';
             default:
-                return '<i class="fas fa-server"></i>';
+                return '<i class="fas fa-cloud"></i>';
         }
     }
 
