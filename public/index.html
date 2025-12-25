@@ -5392,7 +5392,7 @@ document.addEventListener('DOMContentLoaded', function() {
         return tabContent;
     }
 
-    // Funktion zum Erstellen des "Speicher"-Tabs - Vereinfachte Version mit Fokus auf Netzlaufwerke
+    // Funktion zum Erstellen des "Speicher"-Tabs - Zeigt Netzlaufwerke prominent an
     function createStorageTab(device) {
         const tabContent = document.createElement('div');
         tabContent.className = 'tab-content';
@@ -5411,9 +5411,14 @@ document.addEventListener('DOMContentLoaded', function() {
             device.networkDrives.forEach((drive, index) => {
                 const driveLetter = drive.DeviceID || '';
                 const remotePath = drive.RemotePath || 'N/A';
-                const status = drive.SizeGB !== 'N/A' ? 'Verbunden' : 'Nicht verbunden';
-                const statusIcon = drive.SizeGB !== 'N/A' ? 'fa-check-circle' : 'fa-times-circle';
-                const statusColor = drive.SizeGB !== 'N/A' ? 'var(--success)' : 'var(--text-light-color)';
+                
+                // Status bestimmen, falls vorhanden
+                let statusHtml = '';
+                if (drive.ConnectionType) {
+                    const statusIcon = 'fa-check-circle'; // Annahme: immer verbunden
+                    const statusColor = 'var(--success)';
+                    statusHtml = `<div class="network-drive-status" style="color: ${statusColor};"><i class="fas ${statusIcon}"></i> ${drive.ConnectionType}</div>`;
+                }
                 
                 // Zeigt das Format an: H:: \\etkn.de\ETK\Homes\fsansone
                 drivesHtml += `
@@ -5422,9 +5427,7 @@ document.addEventListener('DOMContentLoaded', function() {
                             <span class="drive-letter">${driveLetter}</span>::
                             <span class="drive-unc-path">${remotePath}</span>
                         </div>
-                        <div class="network-drive-status" style="color: ${statusColor};">
-                            <i class="fas ${statusIcon}"></i> ${status}
-                        </div>
+                        ${statusHtml}
                     </div>
                 `;
             });
@@ -5440,7 +5443,7 @@ document.addEventListener('DOMContentLoaded', function() {
                 <h3 class="detail-section-title"><i class="fas fa-network-wired"></i> Netzlaufwerke</h3>
                 <div class="no-data">
                     <i class="fas fa-network-wired"></i>
-                    <h3>Keine Netzlaufwerke erkannt</h3>
+                    <h3>Keine Netzwerklaufwerke erkannt</h3>
                     <p>Es konnten keine gemappten Netzlaufwerke auf diesem Gerät gefunden werden.</p>
                 </div>
             `;

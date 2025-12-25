@@ -1,450 +1,553 @@
 # ============================================================
-# Gerätedaten sammeln und an Server senden
+# ETK Asset Management System
+# Systemdaten-Sammlung MIT Netzwerklaufwerk-Erkennung über Registry
 # ============================================================
 
- $ip = "http://10.10.10.99"
- $hostname = $env:COMPUTERNAME
- $user = $env:USERNAME
- $os = (Get-WmiObject Win32_OperatingSystem).Caption
- $osVersion = (Get-WmiObject Win32_OperatingSystem).Version
- $osArch = (Get-WmiObject Win32_OperatingSystem).OSArchitecture
- $manufacturer = (Get-WmiObject Win32_ComputerSystem).Manufacturer
- $model = (Get-WmiObject Win32_ComputerSystem).Model
- $serial = (Get-WmiObject Win32_BIOS).SerialNumber
- $biosVersion = (Get-WmiObject Win32_BIOS).SMBIOSBIOSVersion
- $cpu = (Get-WmiObject Win32_Processor).Name
- $cores = (Get-WmiObject Win32_Processor).NumberOfCores
- $logicalProc = (Get-WmiObject Win32_Processor).NumberOfLogicalProcessors
- $ram = [Math]::Round((Get-WmiObject Win32_ComputerSystem).TotalPhysicalMemory / 1GB, 2)
+# Konfiguration
+$serverIP = "http://10.10.10.99"
+$registryPath = "HKLM:\SOFTWARE\ETK-Asset"
 
-# Asset-Nummer generieren (falls nicht vorhanden)
- $assetNumber = $null
+# Basis-Informationen sammeln
+$hostname = $env:COMPUTERNAME
+$user = $env:USERNAME
+$timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
+
+Write-Host "`n=== ETK Asset Management ===" -ForegroundColor Cyan
+Write-Host "Hostname: $hostname" -ForegroundColor Yellow
+Write-Host "Benutzer: $user" -ForegroundColor Yellow
+Write-Host "Zeitstempel: $timestamp" -ForegroundColor Yellow
+
+# Betriebssystem-Informationen
 try {
-    # Versuche, eine vorhandene Asset-Nummer aus der Registry zu lesen
-    $assetNumber = Get-ItemProperty -Path "HKLM:\SOFTWARE\ETK-Asset" -Name "AssetNumber" -ErrorAction SilentlyContinue | Select-Object -ExpandProperty "AssetNumber"
-} catch {
-    # Ignoriere Fehler, wenn der Registry-Eintrag nicht existiert
+    Write-Host "`n[1/8] Sammle Betriebssystem-Informationen..." -ForegroundColor Cyan
+    $osInfo = Get-WmiObject Win32_OperatingSystem
+    $os = $osInfo.Caption
+    $osVersion = $osInfo.Version
+    $osArch = $osInfo.OSArchitecture
+    # osBuild wird nicht verwendet, daher entfernt
+    Write-Host "   OK Betriebssystem: $os" -ForegroundColor Green
+}
+catch {
+    Write-Host "   FEHLER beim Abrufen der OS-Informationen" -ForegroundColor Red
+    $os = "Unbekannt"
+    $osVersion = "N/A"
+    $osArch = "N/A"
 }
 
+# Hardware-Informationen
+try {
+    Write-Host "`n[2/8] Sammle Hardware-Informationen..." -ForegroundColor Cyan
+    $computerSystem = Get-WmiObject Win32_ComputerSystem
+    $manufacturer = $computerSystem.Manufacturer
+    $model = $computerSystem.Model
+    $totalRam = [Math]::Round($computerSystem.TotalPhysicalMemory / 1GB, 2)
+    Write-Host "   OK Hersteller/Modell: $manufacturer / $model" -ForegroundColor Green
+    Write-Host "   OK RAM: $totalRam GB" -ForegroundColor Green
+}
+catch {
+    Write-Host "   FEHLER beim Abrufen der Hardware-Informationen" -ForegroundColor Red
+    $manufacturer = "Unbekannt"
+    $model = "N/A"
+    $totalRam = 0
+}
 
-if (-not $assetNumber) {
-    # Generiere eine 8-stellige Asset-Nummer, falls keine vorhanden ist
-    $assetNumber = -join ((48..57 + 65..90 | Get-Random -Count 8) | ForEach-Object {[char]$_})
+# CPU-Informationen
+try {
+    Write-Host "`n[3/8] Sammle CPU-Informationen..." -ForegroundColor Cyan
+    $cpuInfo = Get-WmiObject Win32_Processor
+    $cpu = $cpuInfo.Name
+    $cpuCores = $cpuInfo.NumberOfCores
+    $cpuThreads = $cpuInfo.NumberOfLogicalProcessors
+    # cpuMaxSpeed wird nicht verwendet, daher entfernt
+    Write-Host "   OK CPU: $cpu" -ForegroundColor Green
+    Write-Host "   OK Kerne/Threads: $cpuCores / $cpuThreads" -ForegroundColor Green
+}
+catch {
+    Write-Host "   FEHLER beim Abrufen der CPU-Informationen" -ForegroundColor Red
+    $cpu = "Unbekannt"
+    $cpuCores = 0
+    $cpuThreads = 0
+}
+
+# BIOS-Informationen
+try {
+    Write-Host "`n[4/8] Sammle BIOS-Informationen..." -ForegroundColor Cyan
+    $bios = Get-WmiObject Win32_BIOS
+    $serialNumber = $bios.SerialNumber
+    $biosVersion = $bios.SMBIOSBIOSVersion
+    Write-Host "   OK Seriennummer: $serialNumber" -ForegroundColor Green
+    Write-Host "   OK BIOS Version: $biosVersion" -ForegroundColor Green
+}
+catch {
+    Write-Host "   FEHLER beim Abrufen der BIOS-Informationen" -ForegroundColor Red
+    $serialNumber = "N/A"
+    $biosVersion = "N/A"
+}
+
+# GPU-Informationen
+try {
+    Write-Host "`n[5/8] Sammle GPU-Informationen..." -ForegroundColor Cyan
+    $gpus = @()
+    $videoControllers = Get-WmiObject Win32_VideoController
+    
+    foreach ($gpu in $videoControllers) {
+        $gpuInfo = @{
+            Name = $gpu.Name
+            DriverVersion = $gpu.DriverVersion
+            AdapterRAMGB = if ($gpu.AdapterRAM) { [Math]::Round($gpu.AdapterRAM / 1GB, 2) } else { 0 }
+            DriverDate = if ($gpu.DriverDate) { 
+                try {
+                    [DateTime]::ParseExact($gpu.DriverDate.Substring(0, 8), "yyyyMMdd", $null).ToString("yyyy-MM-dd")
+                }
+                catch {
+                    $gpu.DriverDate
+                }
+            } else { "N/A" }
+            VideoProcessor = $gpu.VideoProcessor
+            VideoModeDescription = $gpu.VideoModeDescription
+        }
+        $gpus += $gpuInfo
+        Write-Host "   OK GPU: $($gpu.Name)" -ForegroundColor Green
+    }
+    
+    if ($gpus.Count -eq 0) {
+        Write-Host "   INFO: Keine GPU gefunden" -ForegroundColor Yellow
+    }
+}
+catch {
+    Write-Host "   FEHLER beim Abrufen der GPU-Informationen" -ForegroundColor Red
+    $gpus = @()
+}
+
+# Lokale Festplatten
+try {
+    Write-Host "`n[6/8] Sammle Festplatten-Informationen..." -ForegroundColor Cyan
+    $localDrives = @()
+    $disks = Get-WmiObject Win32_LogicalDisk -Filter "DriveType=3"  # Nur lokale Festplatten
+    
+    foreach ($disk in $disks) {
+        $sizeGB = [Math]::Round($disk.Size / 1GB, 2)
+        $freeGB = [Math]::Round($disk.FreeSpace / 1GB, 2)
+        $usedGB = $sizeGB - $freeGB
+        if ($sizeGB -gt 0) {
+            $usedPercent = [Math]::Round(($usedGB / $sizeGB) * 100, 2)
+        } else {
+            $usedPercent = 0
+        }
+        
+        $driveInfo = @{
+            DeviceID = $disk.DeviceID
+            SizeGB = $sizeGB
+            FreeGB = $freeGB
+            UsedGB = $usedGB
+            UsedPercentage = $usedPercent
+            VolumeName = $disk.VolumeName
+            FileSystem = $disk.FileSystem
+            VolumeSerialNumber = $disk.VolumeSerialNumber
+            DriveType = "Lokale Festplatte"
+        }
+        $localDrives += $driveInfo
+        
+        Write-Host "   OK Laufwerk $($disk.DeviceID): $sizeGB GB ($usedPercent% verwendet)" -ForegroundColor Green
+    }
+    
+    if ($localDrives.Count -eq 0) {
+        Write-Host "   INFO: Keine lokalen Festplatten gefunden" -ForegroundColor Yellow
+    }
+}
+catch {
+    Write-Host "   FEHLER beim Abrufen der Festplatten-Informationen" -ForegroundColor Red
+    $localDrives = @()
+}
+
+# Andere Laufwerke (USB, CD-ROM)
+try {
+    Write-Host "`n[7/8] Sammle andere Laufwerke..." -ForegroundColor Cyan
+    $otherDrives = @()
+    $drives = Get-WmiObject Win32_LogicalDisk | Where-Object { 
+        $_.DriveType -ne 3  # Nicht lokale Festplatten
+    }
+    
+    foreach ($drive in $drives) {
+        $driveType = switch ($drive.DriveType) {
+            2 { "USB-Laufwerk" }
+            4 { "Netzwerklaufwerk (WMI)" }
+            5 { "CD/DVD-Laufwerk" }
+            default { "Unbekannt" }
+        }
+        
+        # Netzwerklaufwerke über WMI werden ignoriert
+        if ($drive.DriveType -ne 4) {
+            $sizeGB = "N/A"
+            if ($drive.Size) {
+                $sizeGB = [Math]::Round($drive.Size / 1GB, 2)
+            }
+            
+            $freeGB = "N/A"
+            if ($drive.FreeSpace) {
+                $freeGB = [Math]::Round($drive.FreeSpace / 1GB, 2)
+            }
+            
+            $driveInfo = @{
+                DeviceID = $drive.DeviceID
+                DriveType = $driveType
+                SizeGB = $sizeGB
+                FreeGB = $freeGB
+                VolumeName = $drive.VolumeName
+                FileSystem = $drive.FileSystem
+            }
+            $otherDrives += $driveInfo
+            
+            Write-Host "   OK $driveType $($drive.DeviceID)" -ForegroundColor Green
+        } else {
+            Write-Host "   INFO: Ignoriere WMI-Netzwerklaufwerk $($drive.DeviceID)" -ForegroundColor Gray
+        }
+    }
+}
+catch {
+    Write-Host "   FEHLER beim Abrufen anderer Laufwerke" -ForegroundColor Red
+    $otherDrives = @()
+}
+
+# Netzwerklaufwerke über Registry erkennen (HKCU)
+try {
+    Write-Host "`n[8/8] Sammle Netzwerklaufwerke aus Registry..." -ForegroundColor Cyan
+    $networkDrives = @()
+    
+    # Prüfe, ob der Registry-Pfad existiert
+    if (Test-Path "HKCU:\Network") {
+        $networkKeys = Get-ChildItem "HKCU:\Network" -ErrorAction SilentlyContinue
+        
+        foreach ($key in $networkKeys) {
+            $driveLetter = $key.PSChildName
+            $drivePath = "HKCU:\Network\$driveLetter"
+            
+            try {
+                $regValues = Get-ItemProperty -Path $drivePath -ErrorAction SilentlyContinue
+                
+                $driveInfo = @{
+                    DeviceID = "$driveLetter" + ":"
+                    ProviderName = if ($regValues.ProviderName) { $regValues.ProviderName } else { "Unbekannt" }
+                    RemotePath = if ($regValues.RemotePath) { $regValues.RemotePath } else { "N/A" }
+                    ConnectionType = if ($regValues.ConnectionType) { 
+                        switch ($regValues.ConnectionType) {
+                            1 { "Laufwerk" }
+                            default { "Anderer Typ ($($regValues.ConnectionType))" }
+                        }
+                    } else { "N/A" }
+                    UserName = if ($regValues.UserName) { $regValues.UserName } else { "N/A" }
+                    Source = "Registry (HKCU)"
+                }
+                
+                $networkDrives += $driveInfo
+                Write-Host "   OK Netzwerklaufwerk $($driveInfo.DeviceID): $($driveInfo.RemotePath)" -ForegroundColor Green
+            }
+            catch {
+                Write-Host "   INFO: Fehler beim Lesen von Laufwerk $driveLetter" -ForegroundColor Yellow
+            }
+        }
+        
+        if ($networkDrives.Count -eq 0) {
+            Write-Host "   INFO: Keine Netzwerklaufwerke in Registry gefunden" -ForegroundColor Yellow
+        }
+    } else {
+        Write-Host "   INFO: Registry-Pfad HKCU:\Network existiert nicht" -ForegroundColor Yellow
+    }
+}
+catch {
+    Write-Host "   FEHLER beim Abrufen der Netzwerklaufwerke aus Registry" -ForegroundColor Red
+    $networkDrives = @()
+}
+
+# Asset-Nummer verwalten
+function Get-AssetNumber {
+    try {
+        if (Test-Path $registryPath) {
+            $asset = Get-ItemProperty -Path $registryPath -Name "AssetNumber" -ErrorAction SilentlyContinue
+            if ($asset -and $asset.AssetNumber) {
+                return $asset.AssetNumber
+            }
+        }
+        
+        $newAsset = -join ((48..57 + 65..90 | Get-Random -Count 8) | ForEach-Object { [char]$_ })
+        
+        if (-not (Test-Path $registryPath)) {
+            New-Item -Path $registryPath -Force | Out-Null
+        }
+        
+        Set-ItemProperty -Path $registryPath -Name "AssetNumber" -Value $newAsset -Force
+        return $newAsset
+    }
+    catch {
+        Write-Host "Warnung: Konnte Asset-Nummer nicht in Registry speichern" -ForegroundColor Yellow
+        return "TEMP-" + (Get-Date -Format "yyyyMMddHHmmss")
+    }
+}
+
+# Metadaten aus Registry lesen
+function Get-AssetMetadata {
+    $metadata = @{
+        Location = ""
+        Status = "in Betrieb"
+        Notes = ""
+    }
     
     try {
-        # Speichere die Asset-Nummer in der Registry für zukünftige Verwendung
-        if (-not (Test-Path "HKLM:\SOFTWARE\ETK-Asset")) {
-            New-Item -Path "HKLM:\SOFTWARE\ETK-Asset" -Force | Out-Null
+        if (Test-Path $registryPath) {
+            $regData = Get-ItemProperty -Path $registryPath
+            
+            if ($regData.Location) { $metadata.Location = $regData.Location }
+            if ($regData.Status) { $metadata.Status = $regData.Status }
+            if ($regData.Notes) { $metadata.Notes = $regData.Notes }
         }
-        Set-ItemProperty -Path "HKLM:\SOFTWARE\ETK-Asset" -Name "AssetNumber" -Value $assetNumber -Force
-    } catch {
-        Write-Host "Fehler beim Speichern der Asset-Nummer in der Registry: $_"
     }
-}
-
-# Standort ermitteln (falls nicht vorhanden)
- $location = ""
-try {
-    # Versuche, einen vorhandenen Standort aus der Registry zu lesen
-    $location = Get-ItemProperty -Path "HKLM:\SOFTWARE\ETK-Asset" -Name "Location" -ErrorAction SilentlyContinue | Select-Object -ExpandProperty "Location"
-    if (-not $location) { $location = "" }
-} catch {
-    # Ignoriere Fehler, wenn der Registry-Eintrag nicht existiert
-    $location = ""
-}
-
-# Status ermitteln (Standard: "in Betrieb")
- $status = "in Betrieb"
-try {
-    # Versuche, einen vorhandenen Status aus der Registry zu lesen
-    $status = Get-ItemProperty -Path "HKLM:\SOFTWARE\ETK-Asset" -Name "Status" -ErrorAction SilentlyContinue | Select-Object -ExpandProperty "Status"
-    if (-not $status) { $status = "in Betrieb" }
-} catch {
-    # Ignoriere Fehler, wenn der Registry-Eintrag nicht existiert
-    $status = "in Betrieb"
-}
-
-# Bemerkungen ermitteln (falls vorhanden)
- $notes = ""
-try {
-    # Versuche, vorhandene Bemerkungen aus der Registry zu lesen
-    $notes = Get-ItemProperty -Path "HKLM:\SOFTWARE\ETK-Asset" -Name "Notes" -ErrorAction SilentlyContinue | Select-Object -ExpandProperty "Notes"
-    if (-not $notes) { $notes = "" }
-} catch {
-    # Ignoriere Fehler, wenn der Registry-Eintrag nicht existiert
-    $notes = ""
-}
-
-# Detaillierte GPU-Informationen
- $gpuInfo = @()
- $gpus = Get-WmiObject Win32_VideoController
-
-foreach ($gpu in $gpus) {
-    $gpuDetails = @{
-        Name = $gpu.Name
-        AdapterRAMGB = if ($gpu.AdapterRAM -and $gpu.AdapterRAM -gt 0) {
-            [Math]::Round($gpu.AdapterRAM / 1GB, 2)
-        } else {
-            "N/A"
-        }
-        DriverVersion = $gpu.DriverVersion
-        DriverDate = if ($gpu.DriverDate) {
-            [System.Management.ManagementDateTimeConverter]::ToDateTime($gpu.DriverDate).ToString("yyyy-MM-dd")
-        } else {
-            "N/A"
-        }
-        VideoProcessor = $gpu.VideoProcessor
-        VideoModeDescription = $gpu.VideoModeDescription
-        CurrentHorizontalResolution = $gpu.CurrentHorizontalResolution
-        CurrentVerticalResolution = $gpu.CurrentVerticalResolution
-        CurrentRefreshRate = $gpu.CurrentRefreshRate
+    catch {
+        # Keine Warnung, da optional
     }
-    $gpuInfo += $gpuDetails
+    
+    return $metadata
 }
 
-# Lokale Festplatteninformationen
- $localDrives = @()
- $logicalDisks = Get-WmiObject Win32_LogicalDisk -Filter "DriveType=3" # Nur lokale Festplatten
-
-foreach ($disk in $logicalDisks) {
-    $driveDetails = @{
-        DeviceID = $disk.DeviceID
-        SizeGB = [Math]::Round($disk.Size / 1GB, 2)
-        FreeGB = [Math]::Round($disk.FreeSpace / 1GB, 2)
-        UsedGB = [Math]::Round(($disk.Size - $disk.FreeSpace) / 1GB, 2)
-        UsedPercentage = if ($disk.Size -gt 0) {
-            [Math]::Round(($disk.Size - $disk.FreeSpace) / $disk.Size * 100, 2)
-        } else { 0 }
-        VolumeName = $disk.VolumeName
-        VolumeSerialNumber = $disk.VolumeSerialNumber
-        FileSystem = $disk.FileSystem
-        DriveType = "Lokale Festplatte"
-    }
-
-    # Zusätzliche Partition-Informationen
-    $partition = Get-WmiObject Win32_DiskPartition | Where-Object {
-        $_.DeviceID -like "*" + $disk.DeviceID.Replace(":", "") + "*"
-    } | Select-Object -First 1
-
-    if ($partition) {
-        $driveDetails.PartitionSizeGB = [Math]::Round($partition.Size / 1GB, 2)
-        $driveDetails.PartitionType = $partition.Type
-    }
-
-    $localDrives += $driveDetails
-}
-
-# ============================================================
-# VERBESSERTER ABSCHNITT: Netzwerk-Laufwerke (gemappte Netzlaufwerke)
-# ============================================================
- $networkDrives = @()
-
-# Methode 1: Über Get-PSDrive (umfasst alle aktuell gemappten Laufwerke)
-try {
-    $psDrives = Get-PSDrive -PSProvider FileSystem | Where-Object { $_.DisplayRoot -ne $null -and $_.DisplayRoot -like "\\*" }
-
-    foreach ($drive in $psDrives) {
-        $driveLetter = $drive.Name + ":"
-        $remotePath = $drive.DisplayRoot
-
-        $driveDetails = @{
-            DeviceID = $driveLetter
-            SizeGB = if ($drive.Used + $drive.Free) { [Math]::Round(($drive.Used + $drive.Free) / 1GB, 2) } else { "N/A" }
-            FreeGB = if ($drive.Free) { [Math]::Round($drive.Free / 1GB, 2) } else { "N/A" }
-            UsedGB = if ($drive.Used) { [Math]::Round($drive.Used / 1GB, 2) } else { "N/A" }
-            UsedPercentage = if ($drive.Used + $drive.Free) { [Math]::Round($drive.Used / ($drive.Used + $drive.Free) * 100, 2) } else { "N/A" }
-            VolumeName = $drive.Description
-            VolumeSerialNumber = "N/A"
-            FileSystem = $drive.Provider.Name
-            DriveType = "Netzwerk-Laufwerk"
-            ProviderName = $remotePath # Verwendet DisplayRoot für Konsistenz
-            RemotePath = $remotePath
-        }
-        $networkDrives += $driveDetails
-    }
-} catch {
-    Write-Host "Fehler beim Abrufen der Netzlaufwerke über Get-PSDrive: $($_.Exception.Message)" -ForegroundColor Red
-}
-
-# Methode 2: Fallback auf Registry-Einträge für persistente Laufwerke (falls Get-PSDrive nichts findet)
-if ($networkDrives.Count -eq 0) {
+# Netzwerkadapter-Informationen
+function Get-NetworkAdapters {
+    $adapters = @()
+    
     try {
-        $mappedDrivesRegistry = Get-ItemProperty -Path "HKCU:\Network\*" -ErrorAction SilentlyContinue
-
-        foreach ($drive in $mappedDrivesRegistry) {
-            $driveLetter = $drive.PSChildName + ":"
-            $remotePath = $drive.RemotePath
-
-            # Versuche, Details über WMI als Fallback zu erhalten
-            $logicalDisk = Get-WmiObject Win32_LogicalDisk -Filter "DeviceID='$driveLetter'" -ErrorAction SilentlyContinue
-
-            $driveDetails = @{
-                DeviceID = $driveLetter
-                SizeGB = if ($logicalDisk.Size) { [Math]::Round($logicalDisk.Size / 1GB, 2) } else { "N/A" }
-                FreeGB = if ($logicalDisk.FreeSpace) { [Math]::Round($logicalDisk.FreeSpace / 1GB, 2) } else { "N/A" }
-                UsedGB = if ($logicalDisk.Size -and $logicalDisk.FreeSpace) { [Math]::Round(($logicalDisk.Size - $logicalDisk.FreeSpace) / 1GB, 2) } else { "N/A" }
-                UsedPercentage = if ($logicalDisk.Size -and $logicalDisk.FreeSpace) { [Math]::Round(($logicalDisk.Size - $logicalDisk.FreeSpace) / $logicalDisk.Size * 100, 2) } else { "N/A" }
-                VolumeName = $logicalDisk.VolumeName
-                VolumeSerialNumber = $logicalDisk.VolumeSerialNumber
-                FileSystem = $logicalDisk.FileSystem
-                DriveType = "Netzwerk-Laufwerk"
-                ProviderName = $remotePath
-                RemotePath = $remotePath
+        $networkConfigs = Get-WmiObject Win32_NetworkAdapterConfiguration | Where-Object { $_.IPEnabled }
+        
+        foreach ($adapter in $networkConfigs) {
+            $adapterInfo = @{
+                Description = $adapter.Description
+                MACAddress = $adapter.MACAddress
+                IPAddress = if ($adapter.IPAddress) { $adapter.IPAddress[0] } else { "N/A" }
+                SubnetMask = if ($adapter.IPSubnet) { $adapter.IPSubnet[0] } else { "N/A" }
+                DefaultGateway = if ($adapter.DefaultIPGateway) { $adapter.DefaultIPGateway[0] } else { "N/A" }
+                DNSServers = if ($adapter.DNSServerSearchOrder) { $adapter.DNSServerSearchOrder -join ", " } else { "N/A" }
+                DHCPEnabled = $adapter.DHCPEnabled
             }
-            $networkDrives += $driveDetails
+            $adapters += $adapterInfo
         }
-    } catch {
-        Write-Host "Fehler beim Lesen der Registry für Netzlaufwerke: $($_.Exception.Message)" -ForegroundColor Red
     }
-}
-# ============================================================
-# ENDE DES VERBESSERTEN ABSCHNITTS
-# ============================================================
-
-# Cloud-Laufwerke erkennen
- $cloudDrives = @()
-
-# Methode 1: Über WMI nach Cloud-Laufwerken suchen
-try {
- $cloudLogicalDisks = Get-WmiObject Win32_LogicalDisk | Where-Object {
- $_.VolumeName -like "*OneDrive*" -or
- $_.VolumeName -like "*Google Drive*" -or
- $_.VolumeName -like "*Dropbox*" -or
- $_.VolumeName -like "*iCloud*" -or
- $_.Description -like "*Cloud*"
+    catch {
+        # Fehler ignorieren, nicht kritisch
+    }
+    
+    return $adapters
 }
 
-foreach ($disk in $cloudLogicalDisks) {
- $driveDetails = @{
-DeviceID = $disk.DeviceID
-SizeGB = [Math]::Round($disk.Size / 1GB, 2)
-FreeGB = [Math]::Round($disk.FreeSpace / 1GB, 2)
-UsedGB = [Math]::Round(($disk.Size - $disk.FreeSpace) / 1GB, 2)
-UsedPercentage = if ($disk.Size -gt 0) {
-[Math]::Round(($disk.Size - $disk.FreeSpace) / $disk.Size * 100, 2)
-} else { 0 }
-VolumeName = $disk.VolumeName
-VolumeSerialNumber = $disk.VolumeSerialNumber
-FileSystem = $disk.FileSystem
-DriveType = "Cloud-Laufwerk"
-CloudProvider = if ($disk.VolumeName -like "*OneDrive*") { "Microsoft OneDrive" }
-elseif ($disk.VolumeName -like "*Google Drive*") { "Google Drive" }
-elseif ($disk.VolumeName -like "*Dropbox*") { "Dropbox" }
-elseif ($disk.VolumeName -like "*iCloud*") { "Apple iCloud" }
-else { "Unbekannter Cloud-Anbieter" }
-SyncStatus = "Aktiv" # WMI gibt hier leider keinen direkten Status
-LastSyncTime = if ($disk.Description) { $disk.Description } else { "N/A" }
-IsEncrypted = "N/A" # WMI gibt hier leider keine direkte Information
+# Hauptfunktion: JSON-Daten erstellen
+function New-SystemData {
+    Write-Host "`n=== Erstelle JSON-Datenstruktur ===" -ForegroundColor Cyan
+    
+    # Asset-Informationen
+    $assetNumber = Get-AssetNumber
+    $metadata = Get-AssetMetadata
+    $networkAdapters = Get-NetworkAdapters
+    
+    # JSON-Datenstruktur erstellen - angepasst an die HTML-Anwendung
+    $systemData = @{
+        assetNumber = $assetNumber
+        hostname = $hostname
+        user = $user
+        timestamp = $timestamp
+        os = $os
+        osVersion = $osVersion
+        osArch = $osArch
+        manufacturer = $manufacturer
+        model = $model
+        serialNumber = $serialNumber
+        biosVersion = $biosVersion
+        cpu = $cpu
+        cores = $cpuCores
+        logicalProc = $cpuThreads
+        ramGB = $totalRam
+        gpu = $gpus
+        network = $networkAdapters
+        drives = @{
+            localDrives = $localDrives
+            otherDrives = $otherDrives
+            networkDrives = $networkDrives
+        }
+        location = $metadata.Location
+        status = $metadata.Status
+        notes = $metadata.Notes
+    }
+    
+    Write-Host "OK JSON-Datenstruktur erstellt" -ForegroundColor Green
+    Write-Host "  Enthält $($networkDrives.Count) Netzwerklaufwerke aus Registry" -ForegroundColor Gray
+    return $systemData
 }
 
- $cloudDrives += $driveDetails
-}
-} catch {
-Write-Host "Fehler beim Erkennen von Cloud-Laufwerken über WMI: $($_.Exception.Message)" -ForegroundColor Yellow
-}
-
-# Methode 2: Über Registry-Einträge nach Cloud-Synchronisations-Tools suchen
-try {
- $cloudRegPaths = @(
-"HKCU:\SOFTWARE\Microsoft\OneDrive",
-"HKCU:\SOFTWARE\Google\Drive",
-"HKCU:\SOFTWARE\Dropbox",
-"HKCU:\SOFTWARE\Apple\iCloud"
-)
-
-foreach ($regPath in $cloudRegPaths) {
-if (Test-Path $regPath) {
- $cloudProvider = switch ($regPath) {
-"*OneDrive*" { "Microsoft OneDrive" }
-"*Google Drive*" { "Google Drive" }
-"*Dropbox*" { "Dropbox" }
-"*iCloud*" { "Apple iCloud" }
-default { "Unbekannter Cloud-Anbieter" }
-}
-
-try {
- $regProps = Get-ItemProperty -Path $regPath -ErrorAction SilentlyContinue
-if ($regProps) {
- $installPath = $regProps.InstallPath -replace "`"", ""
- $accountEmail = $regProps.UserEmail -replace "`"", ""
- $accountName = $regProps.UserFolder -replace "`"", ""
-
-# Prüfen, ob der Ordner existiert und Informationen sammeln
-if ($installPath -and (Test-Path $installPath)) {
- $cloudDriveInfo = @{
-DeviceID = "Cloud:$(Split-Path $regPath -Leaf)"
-SizeGB = "N/A" # Größe über Registry nicht zuverlässig ermittelbar
-FreeGB = "N/A"
-UsedGB = "N/A"
-UsedPercentage = "N/A"
-VolumeName = Split-Path $installPath -Leaf
-VolumeSerialNumber = "N/A"
-FileSystem = "N/A"
-DriveType = "Cloud-Laufwerk"
-CloudProvider = $cloudProvider
-InstallPath = $installPath
-AccountEmail = $accountEmail
-AccountName = $accountName
-SyncStatus = "Installiert"
-LastSyncTime = "N/A"
-IsEncrypted = "N/A"
-}
-
-# Versuche, zusätzliche Informationen über den Ordner zu sammeln
-try {
- $folderSize = (Get-ChildItem -Path $installPath -Recurse -ErrorAction SilentlyContinue | Measure-Object -Property Length -Sum).Length / 1GB
- $cloudDriveInfo.SizeGB = [Math]::Round($folderSize, 2)
-} catch {
-# Ordnergröße konnte nicht ermittelt werden
-}
-
- $cloudDrives += $cloudDriveInfo
-}
-}
-} catch {
-# Fehler beim Lesen der Registry-Einträge ignorieren
-}
-}
-}
-} catch {
-Write-Host "Fehler beim Erkennen von Cloud-Laufwerken über Registry: $($_.Exception.Message)" -ForegroundColor Yellow
-}
-
-# Methode 3: Über Prozesse nach Cloud-Synchronisations-Tools suchen
-try {
- $cloudProcesses = @("OneDrive.exe", "GoogleDriveSync.exe", "Dropbox.exe", "iCloudPhotos.exe", "iCloudDrive.exe")
-
-foreach ($processName in $cloudProcesses) {
- $process = Get-Process $processName -ErrorAction SilentlyContinue
-if ($process) {
- $cloudProvider = switch ($processName) {
-"OneDrive.exe" { "Microsoft OneDrive" }
-"GoogleDriveSync.exe" { "Google Drive" }
-"Dropbox.exe" { "Dropbox" }
-"iCloudPhotos.exe" { "Apple iCloud Photos" }
-"iCloudDrive.exe" { "Apple iCloud Drive" }
-default { "Unbekannter Cloud-Anbieter" }
-}
-
- $cloudDriveInfo = @{
-DeviceID = "Cloud:Process:$($process.Id)"
-SizeGB = "N/A"
-FreeGB = "N/A"
-UsedGB = "N/A"
-UsedPercentage = "N/A"
-VolumeName = $cloudProvider
-VolumeSerialNumber = "N/A"
-FileSystem = "N/A"
-DriveType = "Cloud-Laufwerk"
-CloudProvider = $cloudProvider
-ProcessId = $process.Id
-ProcessPath = $process.Path
-StartTime = $process.StartTime.ToString("yyyy-MM-dd HH:mm:ss")
-SyncStatus = "Aktiv"
-LastSyncTime = "N/A"
-IsEncrypted = "N/A"
-}
-
- $cloudDrives += $cloudDriveInfo
-}
-}
-} catch {
-Write-Host "Fehler beim Erkennen von Cloud-Laufwerken über Prozesse: $($_.Exception.Message)" -ForegroundColor Yellow
-}
-
-# Weitere Laufwerkstypen (CD-ROM, Netzlaufwerke, etc.)
- $otherDrives = Get-WmiObject Win32_LogicalDisk -Filter "DriveType!=3 AND DriveType!=4" | ForEach-Object {
- $driveType = switch ($_.DriveType) {
-0 { "Unbekannt" }
-1 { "Kein Root-Verzeichnis" }
-2 { "Wechseldatenträger" }
-3 { "Lokale Festplatte" } # Wird bereits oben erfasst
-4 { "Netzwerk-Laufwerk" } # Wird bereits oben erfasst
-5 { "CD-ROM" }
-6 { "RAM-Disk" }
-default { "Unbekannt" }
-}
-
-@{
-DeviceID = $_.DeviceID
-DriveType = $driveType
-SizeGB = if ($_.Size) { [Math]::Round($_.Size / 1GB, 2) } else { "N/A" }
-FreeGB = if ($_.FreeSpace) { [Math]::Round($_.FreeSpace / 1GB, 2) } else { "N/A" }
-VolumeName = $_.VolumeName
-VolumeSerialNumber = $_.VolumeSerialNumber
-FileSystem = $_.FileSystem
-}
-}
-
-# Netzwerkkarteninformationen
- $networkInfo = Get-WmiObject Win32_NetworkAdapterConfiguration | Where-Object {
-    $_.IPEnabled -eq $true
-} | ForEach-Object {
-    @{
-        Description = $_.Description
-        MACAddress = $_.MACAddress
-        IPAddress = if ($_.IPAddress) { $_.IPAddress[0] } else { "N/A" }
-        SubnetMask = if ($_.IPSubnet) { $_.IPSubnet[0] } else { "N/A" }
-        DefaultGateway = if ($_.DefaultIPGateway) { $_.DefaultIPGateway[0] } else { "N/A" }
-        DNSServers = if ($_.DNSServerSearchOrder) { $_.DNSServerSearchOrder -join ", " } else { "N/A" }
-        DHCPEnabled = $_.DHCPEnabled
-        Speed = if ($_.Speed) { $_.Speed } else { 0 }
-        SpeedMbps = if ($_.Speed) { [Math]::Round($_.Speed / 1MB, 2) } else { 0 }
+# Daten an Server senden
+function Send-DataToServer {
+    param(
+        [Parameter(Mandatory=$true)]
+        [object]$Data
+    )
+    
+    try {
+        $jsonData = $Data | ConvertTo-Json -Depth 10
+        $uri = "$serverIP/api/devices"
+        
+        Write-Host "`n=== Sende Daten an Server ===" -ForegroundColor Cyan
+        Write-Host "Ziel: $uri" -ForegroundColor Yellow
+        
+        $headers = @{
+            "Content-Type" = "application/json"
+            "User-Agent" = "ETK-Asset-Management/2.2"
+        }
+        
+        $response = Invoke-RestMethod -Uri $uri -Method Post -Body $jsonData -Headers $headers -TimeoutSec 30 -ErrorAction Stop
+        
+        Write-Host "OK Daten erfolgreich gesendet!" -ForegroundColor Green
+        
+        if ($response.message) {
+            Write-Host "Serverantwort: $($response.message)" -ForegroundColor Green
+        }
+        
+        return $true
+    }
+    catch [System.Net.WebException] {
+        Write-Host "FEHLER: Netzwerkfehler - Server nicht erreichbar" -ForegroundColor Red
+        Write-Host "  Details: $($_.Exception.Message)" -ForegroundColor Gray
+        return $false
+    }
+    catch {
+        Write-Host "FEHLER beim Senden der Daten" -ForegroundColor Red
+        Write-Host "  Details: $_" -ForegroundColor Gray
+        return $false
     }
 }
 
-# JSON-Objekt erstellen
- $data = @{
-    assetNumber = $assetNumber
-    hostname = $hostname
-    user = $user
-    os = $os
-    osVersion = $osVersion
-    osArch = $osArch
-    manufacturer = $manufacturer
-    model = $model
-    serialNumber = $serial
-    biosVersion = $biosVersion
-    cpu = $cpu
-    cores = $cores
-    logicalProc = $logicalProc
-    ramGB = $ram
-    gpu = $gpuInfo # Detaillierte GPU-Informationen
-    drives = @{
-        localDrives = $localDrives
-        networkDrives = $networkDrives
-        cloudDrives = $cloudDrives # Cloud-Laufwerke hinzugefügt
-        otherDrives = $otherDrives
+# Zusammenfassung anzeigen
+function Show-Summary {
+    param(
+        [Parameter(Mandatory=$true)]
+        [object]$Data
+    )
+    
+    Write-Host "`n" + ("=" * 50) -ForegroundColor Cyan
+    Write-Host "ZUSAMMENFASSUNG" -ForegroundColor Cyan
+    Write-Host ("=" * 50) -ForegroundColor Cyan
+    
+    Write-Host "`nBASISINFORMATIONEN:" -ForegroundColor Yellow
+    Write-Host "  Asset-Nummer:   $($Data.assetNumber)" -ForegroundColor Gray
+    Write-Host "  Hostname:       $($Data.hostname)" -ForegroundColor Gray
+    Write-Host "  Benutzer:       $($Data.user)" -ForegroundColor Gray
+    Write-Host "  Zeitstempel:    $($Data.timestamp)" -ForegroundColor Gray
+    
+    Write-Host "`nBETRIEBSSYSTEM:" -ForegroundColor Yellow
+    Write-Host "  Name:           $($Data.os)" -ForegroundColor Gray
+    Write-Host "  Version:        $($Data.osVersion)" -ForegroundColor Gray
+    Write-Host "  Architektur:    $($Data.osArch)" -ForegroundColor Gray
+    
+    Write-Host "`nHARDWARE:" -ForegroundColor Yellow
+    Write-Host "  Hersteller:     $($Data.manufacturer)" -ForegroundColor Gray
+    Write-Host "  Modell:         $($Data.model)" -ForegroundColor Gray
+    Write-Host "  Seriennummer:   $($Data.serialNumber)" -ForegroundColor Gray
+    Write-Host "  BIOS Version:   $($Data.biosVersion)" -ForegroundColor Gray
+    Write-Host "  CPU:            $($Data.cpu)" -ForegroundColor Gray
+    Write-Host "  Kerne/Threads:  $($Data.cores)/$($Data.logicalProc)" -ForegroundColor Gray
+    Write-Host "  RAM:            $($Data.ramGB) GB" -ForegroundColor Gray
+    
+    if ($Data.gpu.Count -gt 0) {
+        Write-Host "  Grafikkarten:" -ForegroundColor Yellow
+        foreach ($gpu in $Data.gpu) {
+            Write-Host "    - $($gpu.Name)" -ForegroundColor Gray
+        }
     }
-    network = $networkInfo
-    status = $status
-    location = $location
-    notes = $notes
-    timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
-} | ConvertTo-Json -Depth 6
-
-# An Server senden
-try {
-    $response = Invoke-RestMethod -Uri "${ip}/api/devices" -Method Post -Body $data -ContentType "application/json"
-    Write-Host "Daten erfolgreich gesendet: $($response.message)" -ForegroundColor Green
-    Write-Host "Hostname: $hostname" -ForegroundColor Yellow
-    Write-Host "Asset-Nummer: $assetNumber" -ForegroundColor Cyan
-
-    # Zusätzliche Informationen anzeigen
-    Write-Host "`nGefundene GPUs:" -ForegroundColor Magenta
-    $gpuInfo | ForEach-Object {
-        Write-Host " - $($_.Name) ($($_.VideoProcessor))" -ForegroundColor Gray
+    
+    Write-Host "`nFESTPLATTEN:" -ForegroundColor Yellow
+    if ($Data.drives.localDrives.Count -gt 0) {
+        foreach ($drive in $Data.drives.localDrives) {
+            Write-Host "  $($drive.DeviceID): $($drive.SizeGB) GB ($($drive.UsedPercentage)% verwendet)" -ForegroundColor Gray
+        }
+    } else {
+        Write-Host "  Keine lokalen Festplatten gefunden" -ForegroundColor Gray
     }
-
-    Write-Host "`nGefundene Laufwerke:" -ForegroundColor Magenta
-    $localDrives | ForEach-Object {
-        Write-Host " - $($_.DeviceID): $($_.SizeGB) GB ($($_.UsedPercentage)% verwendet)" -ForegroundColor Gray
+    
+    if ($Data.drives.otherDrives.Count -gt 0) {
+        Write-Host "`nANDERE LAUFWERKE:" -ForegroundColor Yellow
+        foreach ($drive in $Data.drives.otherDrives) {
+            if ($drive.SizeGB -ne "N/A") {
+                Write-Host "  $($drive.DeviceID): $($drive.DriveType) - $($drive.SizeGB) GB" -ForegroundColor Gray
+            } else {
+                Write-Host "  $($drive.DeviceID): $($drive.DriveType)" -ForegroundColor Gray
+            }
+        }
     }
-
-    $networkDrives | ForEach-Object {
-        Write-Host " - Netzwerklaufwerk $($_.DeviceID): $($_.SizeGB) GB ($($_.UsedPercentage)% verwendet)" -ForegroundColor Cyan
+    
+    # Netzwerklaufwerke anzeigen
+    if ($Data.drives.networkDrives.Count -gt 0) {
+        Write-Host "`nNETZWERKLAUFWERKE:" -ForegroundColor Yellow
+        foreach ($drive in $Data.drives.networkDrives) {
+            Write-Host "  $($drive.DeviceID): $($drive.RemotePath)" -ForegroundColor Gray
+            if ($drive.UserName -ne "N/A") {
+                Write-Host "      Benutzer: $($drive.UserName)" -ForegroundColor DarkGray
+            }
+        }
     }
-} catch {
-    Write-Host "Fehler beim Senden: $($_.Exception.Message)" -ForegroundColor Red
-    Write-Host "Stellen Sie sicher, dass der Node.js-Server erreichbar ist" -ForegroundColor Red
+    
+    if ($Data.location -or $Data.notes) {
+        Write-Host "`nMETADATEN:" -ForegroundColor Yellow
+        if ($Data.location) {
+            Write-Host "  Standort:       $($Data.location)" -ForegroundColor Gray
+        }
+        Write-Host "  Status:         $($Data.status)" -ForegroundColor Gray
+        if ($Data.notes) {
+            Write-Host "  Bemerkungen:    $($Data.notes)" -ForegroundColor Gray
+        }
+    }
+    
+    Write-Host "`n" + ("=" * 50) -ForegroundColor Cyan
 }
+
+# Hauptausführungsblock
+try {
+    # Zeige Header
+    Write-Host "`n" + ("=" * 60) -ForegroundColor Cyan
+    Write-Host "ETK ASSET MANAGEMENT SYSTEM" -ForegroundColor White -BackgroundColor DarkBlue
+    Write-Host "Version 2.2 - MIT Netzwerklaufwerk-Erkennung (Registry)" -ForegroundColor Yellow
+    Write-Host ("=" * 60) -ForegroundColor Cyan
+    
+    # Daten sammeln und zusammenstellen
+    $systemData = New-SystemData
+    
+    # Zusammenfassung anzeigen
+    Show-Summary -Data $systemData
+    
+    # Benutzerabfrage
+    Write-Host "`nMöchten Sie die Daten an den Server senden?" -ForegroundColor Yellow
+    $confirmation = Read-Host "  (J/N) [Standard: J]"
+    
+    if ($confirmation -ne 'N' -and $confirmation -ne 'n') {
+        # Daten an Server senden
+        $success = Send-DataToServer -Data $systemData
+        
+        if ($success) {
+            Write-Host "`n" + ("=" * 60) -ForegroundColor Green
+            Write-Host "ERFOLG: Vorgang erfolgreich abgeschlossen" -ForegroundColor White -BackgroundColor Green
+            Write-Host ("=" * 60) -ForegroundColor Green
+        } else {
+            Write-Host "`n" + ("=" * 60) -ForegroundColor Red
+            Write-Host "FEHLER: Daten konnten nicht gesendet werden" -ForegroundColor White -BackgroundColor Red
+            Write-Host ("=" * 60) -ForegroundColor Red
+            Write-Host "`nTipps:" -ForegroundColor Yellow
+            Write-Host "  1. Überprüfen Sie die Netzwerkverbindung" -ForegroundColor Gray
+            Write-Host "  2. Stellen Sie sicher, dass der Server erreichbar ist" -ForegroundColor Gray
+            Write-Host "  3. Überprüfen Sie die Server-URL: $serverIP" -ForegroundColor Gray
+        }
+    } else {
+        Write-Host "`nVorgang abgebrochen. Daten wurden nicht gesendet." -ForegroundColor Yellow
+    }
+}
+catch {
+    Write-Host "`n" + ("=" * 60) -ForegroundColor Red
+    Write-Host "KRITISCHER FEHLER" -ForegroundColor White -BackgroundColor Red
+    Write-Host ("=" * 60) -ForegroundColor Red
+    Write-Host "Fehlerdetails: $_" -ForegroundColor Red
+    Write-Host "`nDas Skript wird beendet." -ForegroundColor Yellow
+    exit 1
+}
+
+Write-Host "`nSkript beendet." -ForegroundColor Cyan
