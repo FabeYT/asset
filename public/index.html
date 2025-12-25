@@ -826,6 +826,58 @@ max-height: calc(90vh - 160px); /* Maximale Höhe des Inhaltsbereichs */
     gap: 8px;
 }
 
+/* Netzlaufwerke-Liste (vereinfachte Darstellung) */
+.network-drives-list {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.network-drive-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 15px 20px;
+    background: var(--light-grey);
+    border-radius: var(--border-radius);
+    border-left: 4px solid var(--info);
+    transition: var(--transition);
+}
+
+.network-drive-item:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05);
+}
+
+.network-drive-path {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-family: 'Courier New', monospace;
+    font-size: 15px;
+    color: var(--text-color);
+}
+
+.drive-letter {
+    font-weight: 700;
+    color: var(--primary);
+    font-size: 18px;
+}
+
+.drive-unc-path {
+    color: var(--text-color);
+}
+
+.network-drive-status {
+    font-size: 14px;
+    font-weight: 500;
+    white-space: nowrap;
+}
+
+.network-drive-status i {
+    margin-right: 5px;
+}
+
 .tab-button:hover {
     color: var(--primary);
 }
@@ -5340,12 +5392,62 @@ document.addEventListener('DOMContentLoaded', function() {
         return tabContent;
     }
 
-    // Funktion zum Erstellen des "Speicher"-Tabs - Jetzt mit allen Laufwerkstypen
+    // Funktion zum Erstellen des "Speicher"-Tabs - Vereinfachte Version mit Fokus auf Netzlaufwerke
     function createStorageTab(device) {
         const tabContent = document.createElement('div');
         tabContent.className = 'tab-content';
 
-        // Lokale Laufwerke
+        // Netzlaufwerke - HAUPTFOKUS
+        if (device.networkDrives && device.networkDrives.length > 0) {
+            const networkDrivesSection = document.createElement('div');
+            networkDrivesSection.className = 'detail-section';
+            
+            // Überschrift
+            let drivesHtml = '<h3 class="detail-section-title"><i class="fas fa-network-wired"></i> Netzlaufwerke</h3>';
+            
+            // Eine einfache, klare Liste im gewünschten Format
+            drivesHtml += '<div class="network-drives-list">';
+            
+            device.networkDrives.forEach((drive, index) => {
+                const driveLetter = drive.DeviceID || '';
+                const remotePath = drive.RemotePath || 'N/A';
+                const status = drive.SizeGB !== 'N/A' ? 'Verbunden' : 'Nicht verbunden';
+                const statusIcon = drive.SizeGB !== 'N/A' ? 'fa-check-circle' : 'fa-times-circle';
+                const statusColor = drive.SizeGB !== 'N/A' ? 'var(--success)' : 'var(--text-light-color)';
+                
+                // Zeigt das Format an: H:: \\etkn.de\ETK\Homes\fsansone
+                drivesHtml += `
+                    <div class="network-drive-item">
+                        <div class="network-drive-path">
+                            <span class="drive-letter">${driveLetter}</span>::
+                            <span class="drive-unc-path">${remotePath}</span>
+                        </div>
+                        <div class="network-drive-status" style="color: ${statusColor};">
+                            <i class="fas ${statusIcon}"></i> ${status}
+                        </div>
+                    </div>
+                `;
+            });
+            
+            drivesHtml += '</div>';
+            networkDrivesSection.innerHTML = drivesHtml;
+            tabContent.appendChild(networkDrivesSection);
+        } else {
+            // Falls keine Netzlaufwerke gefunden wurden
+            const noDrivesSection = document.createElement('div');
+            noDrivesSection.className = 'detail-section';
+            noDrivesSection.innerHTML = `
+                <h3 class="detail-section-title"><i class="fas fa-network-wired"></i> Netzlaufwerke</h3>
+                <div class="no-data">
+                    <i class="fas fa-network-wired"></i>
+                    <h3>Keine Netzlaufwerke erkannt</h3>
+                    <p>Es konnten keine gemappten Netzlaufwerke auf diesem Gerät gefunden werden.</p>
+                </div>
+            `;
+            tabContent.appendChild(noDrivesSection);
+        }
+
+        // Optional: Lokale Laufwerke darunter anzeigen (aber weniger prominent)
         if (device.drives && device.drives.localDrives && device.drives.localDrives.length > 0) {
             const localDrivesSection = document.createElement('div');
             localDrivesSection.className = 'detail-section';
@@ -5360,23 +5462,13 @@ document.addEventListener('DOMContentLoaded', function() {
                     <div class="drive-card">
                         <div class="drive-header">
                             <div class="drive-name">${drive.DeviceID || 'Unbekanntes Laufwerk'}</div>
-                            <div class="drive-type"><i class="fas fa-hdd"></i> Lokales Laufwerk</div>
+                            <div class="drive-type"><i class="fas fa-hdd"></i> Lokal</div>
                         </div>
                         <div class="drive-usage">
                             <div class="usage-bar">
                                 <div class="usage-fill" style="width: ${usagePercentage}%; background-color: ${usageColor};"></div>
                             </div>
                             <div class="usage-text">${drive.UsedGB || 0} GB / ${drive.SizeGB || 0} GB (${usagePercentage}%)</div>
-                        </div>
-                        <div class="drive-details">
-                            <div class="drive-detail">
-                                <div class="detail-label">Volume-Name</div>
-                                <div class="detail-value">${drive.VolumeName || 'N/A'}</div>
-                            </div>
-                            <div class="drive-detail">
-                                <div class="detail-label">Dateisystem</div>
-                                <div class="detail-value">${drive.FileSystem || 'N/A'}</div>
-                            </div>
                         </div>
                     </div>
                 `;
@@ -5385,145 +5477,6 @@ document.addEventListener('DOMContentLoaded', function() {
             drivesHtml += '</div>';
             localDrivesSection.innerHTML = drivesHtml;
             tabContent.appendChild(localDrivesSection);
-        }
-
-        // Netzlaufwerke - ANGEPASST für bessere Anzeige
-        if (device.networkDrives && device.networkDrives.length > 0) {
-            const networkDrivesSection = document.createElement('div');
-            networkDrivesSection.className = 'detail-section';
-            
-            let drivesHtml = '<h3 class="detail-section-title"><i class="fas fa-network-wired"></i> Netzlaufwerke</h3>';
-            
-            // Zuerst eine Übersichtstabelle mit allen Netzlaufwerken
-            drivesHtml += '<div class="network-drives-overview">';
-            drivesHtml += '<table class="network-drives-table">';
-            drivesHtml += '<thead><tr><th>Laufwerk</th><th>Pfad</th><th>Status</th><th>Größe</th></tr></thead>';
-            drivesHtml += '<tbody>';
-            
-            device.networkDrives.forEach((drive, index) => {
-                const driveLetter = drive.DeviceID || '';
-                const remotePath = drive.RemotePath || 'N/A';
-                const volumeName = drive.VolumeName || '';
-                const status = drive.SizeGB !== 'N/A' ? 'Verbunden' : 'Nicht verbunden';
-                const statusClass = drive.SizeGB !== 'N/A' ? 'connected' : 'disconnected';
-                const sizeInfo = drive.SizeGB !== 'N/A' ? `${drive.UsedGB || 0} GB / ${drive.SizeGB || 0} GB` : 'N/A';
-                
-                drivesHtml += `
-                    <tr>
-                        <td class="drive-letter">${driveLetter}</td>
-                        <td class="drive-path">${remotePath}</td>
-                        <td class="drive-status ${statusClass}">${status}</td>
-                        <td class="drive-size">${sizeInfo}</td>
-                    </tr>
-                `;
-            });
-            
-            drivesHtml += '</tbody></table></div>';
-            
-            // Dann detaillierte Karten für jedes Netzlaufwerk
-            drivesHtml += '<div class="network-drives-grid">';
-            
-            device.networkDrives.forEach((drive, index) => {
-                const networkIcon = getNetworkIcon(drive.ProviderName);
-                const usagePercentage = drive.SizeGB > 0 ? Math.round((drive.UsedGB / drive.SizeGB) * 100) : 0;
-                const usageColor = usagePercentage > 90 ? 'var(--danger)' : usagePercentage > 75 ? 'var(--warning)' : 'var(--success)';
-                const driveLetter = drive.DeviceID || '';
-                const remotePath = drive.RemotePath || 'N/A';
-
-                drivesHtml += `
-                    <div class="drive-card">
-                        <div class="drive-header">
-                            <div class="drive-name">${driveLetter}:: ${remotePath}</div>
-                            <div class="drive-type">${networkIcon} Netzlaufwerk</div>
-                        </div>
-                        <div class="drive-usage">
-                            <div class="usage-bar">
-                                <div class="usage-fill" style="width: ${usagePercentage}%; background-color: ${usageColor};"></div>
-                            </div>
-                            <div class="usage-text">${drive.UsedGB || 0} GB / ${drive.SizeGB || 0} GB (${usagePercentage}%)</div>
-                        </div>
-                        <div class="drive-details">
-                            <div class="drive-detail">
-                                <div class="detail-label">Laufwerksbuchstabe</div>
-                                <div class="detail-value">${driveLetter}</div>
-                            </div>
-                            <div class="drive-detail">
-                                <div class="detail-label">UNC-Pfad</div>
-                                <div class="detail-value">${remotePath}</div>
-                            </div>
-                            <div class="drive-detail">
-                                <div class="detail-label">Volume-Name</div>
-                                <div class="detail-value">${drive.VolumeName || 'N/A'}</div>
-                            </div>
-                            <div class="drive-detail">
-                                <div class="detail-label">Anbieter</div>
-                                <div class="detail-value">${drive.ProviderName || 'N/A'}</div>
-                            </div>
-                        </div>
-                    </div>
-                `;
-            });
-
-            drivesHtml += '</div>';
-            networkDrivesSection.innerHTML = drivesHtml;
-            tabContent.appendChild(networkDrivesSection);
-        }
-
-        // Cloud-Laufwerke
-        if (device.drives && device.drives.cloudDrives && device.drives.cloudDrives.length > 0) {
-            const cloudDrivesSection = document.createElement('div');
-            cloudDrivesSection.className = 'detail-section';
-            
-            let drivesHtml = '<h3 class="detail-section-title"><i class="fas fa-cloud"></i> Cloud-Laufwerke</h3><div class="drives-grid">';
-
-            device.drives.cloudDrives.forEach((drive, index) => {
-                const cloudIcon = getCloudIcon(drive.CloudProvider);
-                const syncStatusColor = drive.SyncStatus === 'Aktiv' ? 'var(--success)' : 'var(--warning)';
-
-                drivesHtml += `
-                    <div class="drive-card cloud-drive">
-                        <div class="drive-header">
-                            <div class="drive-name">${drive.CloudProvider || 'Unbekannter Anbieter'}</div>
-                            <div class="drive-type">${cloudIcon} Cloud-Laufwerk</div>
-                        </div>
-                        <div class="drive-details">
-                            <div class="drive-detail">
-                                <div class="detail-label">Sync-Status</div>
-                                <div class="detail-value" style="color: ${syncStatusColor};">${drive.SyncStatus || 'N/A'}</div>
-                            </div>
-                            <div class="drive-detail">
-                                <div class="detail-label">Konto</div>
-                                <div class="detail-value">${drive.AccountEmail || 'N/A'}</div>
-                            </div>
-                            <div class="drive-detail">
-                                <div class="detail-label">Installationspfad</div>
-                                <div class="detail-value">${drive.InstallPath || 'N/A'}</div>
-                            </div>
-                        </div>
-                    </div>
-                `;
-            });
-
-            drivesHtml += '</div>';
-            cloudDrivesSection.innerHTML = drivesHtml;
-            tabContent.appendChild(cloudDrivesSection);
-        }
-
-        // Wenn keine Laufwerke gefunden wurden
-        if ((!device.drives || !device.drives.localDrives || device.drives.localDrives.length === 0) &&
-            (!device.networkDrives || device.networkDrives.length === 0) &&
-            (!device.drives || !device.drives.cloudDrives || device.drives.cloudDrives.length === 0)) {
-            const noDrivesSection = document.createElement('div');
-            noDrivesSection.className = 'detail-section';
-            noDrivesSection.innerHTML = `
-                <h3 class="detail-section-title"><i class="fas fa-hdd"></i> Speicher</h3>
-                <div class="no-data">
-                    <i class="fas fa-hdd"></i>
-                    <h3>Keine Laufwerksinformationen verfügbar</h3>
-                    <p>Es konnten keine Informationen zu lokalen, Netzwerk- oder Cloud-Laufwerken gefunden werden.</p>
-                </div>
-            `;
-            tabContent.appendChild(noDrivesSection);
         }
 
         return tabContent;

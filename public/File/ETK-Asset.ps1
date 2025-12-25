@@ -138,60 +138,64 @@ foreach ($disk in $logicalDisks) {
 # VERBESSERTER ABSCHNITT: Netzwerk-Laufwerke (gemappte Netzlaufwerke)
 # ============================================================
  $networkDrives = @()
+
+# Methode 1: Über Get-PSDrive (umfasst alle aktuell gemappten Laufwerke)
 try {
-    # Prüft Registry-Einträge für persistente Laufwerke
-    $mappedDrivesRegistry = Get-ItemProperty -Path "HKCU:\Network\*" -ErrorAction SilentlyContinue
+    $psDrives = Get-PSDrive -PSProvider FileSystem | Where-Object { $_.DisplayRoot -ne $null -and $_.DisplayRoot -like "\\*" }
 
-    foreach ($drive in $mappedDrivesRegistry) {
-        # Der Name des Registry-Keys ist der Laufwerksbuchstabe
-        $driveLetter = $drive.PSChildName + ":"
-        $remotePath = $drive.RemotePath
+    foreach ($drive in $psDrives) {
+        $driveLetter = $drive.Name + ":"
+        $remotePath = $drive.DisplayRoot
 
-        # Versuche, die Laufwerksinformationen mit Get-PSDrive abzurufen
-        # Dies schlägt fehl, wenn das Laufwerk nicht verbunden ist
-        try {
-            $psDrive = Get-PSDrive -Name $drive.PSChildName -ErrorAction Stop
+        $driveDetails = @{
+            DeviceID = $driveLetter
+            SizeGB = if ($drive.Used + $drive.Free) { [Math]::Round(($drive.Used + $drive.Free) / 1GB, 2) } else { "N/A" }
+            FreeGB = if ($drive.Free) { [Math]::Round($drive.Free / 1GB, 2) } else { "N/A" }
+            UsedGB = if ($drive.Used) { [Math]::Round($drive.Used / 1GB, 2) } else { "N/A" }
+            UsedPercentage = if ($drive.Used + $drive.Free) { [Math]::Round($drive.Used / ($drive.Used + $drive.Free) * 100, 2) } else { "N/A" }
+            VolumeName = $drive.Description
+            VolumeSerialNumber = "N/A"
+            FileSystem = $drive.Provider.Name
+            DriveType = "Netzwerk-Laufwerk"
+            ProviderName = $remotePath # Verwendet DisplayRoot für Konsistenz
+            RemotePath = $remotePath
+        }
+        $networkDrives += $driveDetails
+    }
+} catch {
+    Write-Host "Fehler beim Abrufen der Netzlaufwerke über Get-PSDrive: $($_.Exception.Message)" -ForegroundColor Red
+}
 
-            if ($psDrive) {
-                $sizeGB = [Math]::Round(($psDrive.Used + $psDrive.Free) / 1GB, 2)
-                $freeGB = [Math]::Round($psDrive.Free / 1GB, 2)
-                $usedGB = [Math]::Round($psDrive.Used / 1GB, 2)
-                $usedPercentage = if ($sizeGB -gt 0) { [Math]::Round($usedGB / $sizeGB * 100, 2) } else { 0 }
+# Methode 2: Fallback auf Registry-Einträge für persistente Laufwerke (falls Get-PSDrive nichts findet)
+if ($networkDrives.Count -eq 0) {
+    try {
+        $mappedDrivesRegistry = Get-ItemProperty -Path "HKCU:\Network\*" -ErrorAction SilentlyContinue
 
-                $driveDetails = @{
-                    DeviceID = $driveLetter
-                    SizeGB = $sizeGB
-                    FreeGB = $freeGB
-                    UsedGB = $usedGB
-                    UsedPercentage = $usedPercentage
-                    VolumeName = $psDrive.Description
-                    VolumeSerialNumber = "N/A" # Wird von Get-PSDrive nicht bereitgestellt
-                    FileSystem = $psDrive.Provider.Name
-                    DriveType = "Netzwerk-Laufwerk"
-                    ProviderName = $remotePath
-                }
-                $networkDrives += $driveDetails
-            }
-        } catch {
-            # Wenn Get-PSDrive fehlschlägt (Laufwerk nicht verbunden), füge es mit begrenzten Informationen hinzu
-            Write-Host "Laufwerk $driveLetter ist in der Registry vorhanden, aber nicht verbunden. Informationen sind begrenzt." -ForegroundColor Yellow
+        foreach ($drive in $mappedDrivesRegistry) {
+            $driveLetter = $drive.PSChildName + ":"
+            $remotePath = $drive.RemotePath
+
+            # Versuche, Details über WMI als Fallback zu erhalten
+            $logicalDisk = Get-WmiObject Win32_LogicalDisk -Filter "DeviceID='$driveLetter'" -ErrorAction SilentlyContinue
+
             $driveDetails = @{
                 DeviceID = $driveLetter
-                SizeGB = "N/A"
-                FreeGB = "N/A"
-                UsedGB = "N/A"
-                UsedPercentage = "N/A"
-                VolumeName = "Nicht verbunden"
-                VolumeSerialNumber = "N/A"
-                FileSystem = "N/A"
+                SizeGB = if ($logicalDisk.Size) { [Math]::Round($logicalDisk.Size / 1GB, 2) } else { "N/A" }
+                FreeGB = if ($logicalDisk.FreeSpace) { [Math]::Round($logicalDisk.FreeSpace / 1GB, 2) } else { "N/A" }
+                UsedGB = if ($logicalDisk.Size -and $logicalDisk.FreeSpace) { [Math]::Round(($logicalDisk.Size - $logicalDisk.FreeSpace) / 1GB, 2) } else { "N/A" }
+                UsedPercentage = if ($logicalDisk.Size -and $logicalDisk.FreeSpace) { [Math]::Round(($logicalDisk.Size - $logicalDisk.FreeSpace) / $logicalDisk.Size * 100, 2) } else { "N/A" }
+                VolumeName = $logicalDisk.VolumeName
+                VolumeSerialNumber = $logicalDisk.VolumeSerialNumber
+                FileSystem = $logicalDisk.FileSystem
                 DriveType = "Netzwerk-Laufwerk"
                 ProviderName = $remotePath
+                RemotePath = $remotePath
             }
             $networkDrives += $driveDetails
         }
+    } catch {
+        Write-Host "Fehler beim Lesen der Registry für Netzlaufwerke: $($_.Exception.Message)" -ForegroundColor Red
     }
-} catch {
-    Write-Host "Fehler beim Lesen der Registry für Netzwerklaufwerke: $($_.Exception.Message)" -ForegroundColor Red
 }
 # ============================================================
 # ENDE DES VERBESSERTEN ABSCHNITTS
