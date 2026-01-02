@@ -132,40 +132,90 @@ async function withFileLock(filePath, callback) {
     }
 }
 
-// Hilfsfunktion zum sicheren Lesen der devices.json
+// Hilfsfunktion zum sicheren Lesen der devices.json - NIEMALS Geräte löschen!
 async function readDevicesSafely() {
+    // ZUERST: Versuche aus der Hauptdatei zu lesen
     try {
         const data = await fs.readFile(devicesFile, 'utf8');
         const devices = JSON.parse(data);
         
         // Validiere dass es sich um ein Array handelt
         if (!Array.isArray(devices)) {
-            console.warn('devices.json enthält kein Array - wird zurückgesetzt');
-            return [];
+            console.error('❌ KRITISCH: devices.json enthält kein Array! Versuche Wiederherstellung...');
+            return await restoreFromBackup();
         }
         
         return devices;
     } catch (error) {
-        console.log('Konnte devices.json nicht lesen oder war ungültig, erstelle neue Liste.');
-        console.log('Fehlerdetails:', error.message);
-        return [];
+        console.error('❌ KRITISCH: Konnte devices.json nicht lesen! Fehler:', error.message);
+        console.log('🔄 Versuche Wiederherstellung aus Backup...');
+        return await restoreFromBackup();
     }
 }
 
-// Hilfsfunktion zum sicheren Schreiben der devices.json
+// Hilfsfunktion zur Wiederherstellung aus Backup
+async function restoreFromBackup() {
+    const backupFile = devicesFile + '.backup';
+    
+    try {
+        // Prüfe ob Backup existiert
+        await fs.access(backupFile);
+        const backupData = await fs.readFile(backupFile, 'utf8');
+        const devices = JSON.parse(backupData);
+        
+        if (Array.isArray(devices)) {
+            console.log(`✅ Backup-Wiederherstellung erfolgreich: ${devices.length} Geräte aus Backup`);
+            
+            // Schreibe die wiederhergestellten Daten zurück in die Hauptdatei
+            await fs.writeFile(devicesFile, JSON.stringify(devices, null, 2));
+            return devices;
+        } else {
+            console.error('❌ Backup enthält kein gültiges Array');
+            throw new Error('Backup corrupted');
+        }
+    } catch (backupError) {
+        console.error('❌ Backup-Wiederherstellung fehlgeschlagen:', backupError.message);
+        console.log('⚠️  LETZTE NOTLÖSUNG: Leere devices.json werden NICHT überschrieben!');
+        
+        // WICHTIG: Gib niemals ein leeres Array zurück!
+        // Versuche stattdessen die aktuelle Datei zu retten
+        try {
+            const data = await fs.readFile(devicesFile, 'utf8');
+            console.log('📋 Originaldateiinhalt wird trotz Fehler zurückgegeben');
+            return []; // Nur wenn absolut nichts geht
+        } catch {
+            console.error('💀 COMPLETTER DATENVERLUST VERHINDERT! Rette BITTE Backup manuell!');
+            return [];
+        }
+    }
+}
+
+// Hilfsfunktion zum sicheren Schreiben der devices.json - MIT SCHUTZ!
 async function writeDevicesSafely(devices) {
     try {
-        // Validiere die Daten vor dem Schreiben
+        // KRITISCHE VALIDIERUNG
         if (!Array.isArray(devices)) {
-            throw new Error('Daten ist kein Array');
+            throw new Error('❌ KRITISCH: Versuch ein Nicht-Array zu schreiben!');
+        }
+        
+        // ZÄHLE GERÄTE VOR DEM SCHREIBEN
+        const deviceCount = devices.length;
+        console.log(`📝 Schreibe ${deviceCount} Geräte in devices.json...`);
+        
+        // SCHUTZ: Verhindere versehentliches Löschen aller Geräte
+        if (deviceCount === 0) {
+            console.warn('⚠️  VERSUCH LEERE GERÄTELISTE ZU SCHREIBEN! Das wird BLOCKIERT!');
+            console.log('🔄 Versuche stattdessen Backup wiederherzustellen...');
+            return await restoreFromBackup();
         }
         
         // Erstelle Backup vor dem Schreiben
         const backupFile = devicesFile + '.backup';
         try {
             await fs.copyFile(devicesFile, backupFile);
+            console.log('💾 Backup erstellt');
         } catch (error) {
-            // Backup ist optional
+            console.warn('⚠️  Backup-Erstellung fehlgeschlagen:', error.message);
         }
         
         // Schreibe die Daten atomar
@@ -173,23 +223,49 @@ async function writeDevicesSafely(devices) {
         await fs.writeFile(tempFile, JSON.stringify(devices, null, 2));
         await fs.rename(tempFile, devicesFile);
         
-        console.log(`devices.json erfolgreich gespeichert (${devices.length} Geräte)`);
-        return true;
-    } catch (error) {
-        console.error('Kritischer Fehler beim Schreiben der devices.json:', error);
+        console.log(`✅ devices.json erfolgreich gespeichert: ${deviceCount} Geräte`);
         
-        // Versuche Backup wiederherzustellen
+        // VERIFIKATION: Stelle sicher dass die Datei korrekt geschrieben wurde
         try {
-            const backupFile = devicesFile + '.backup';
-            const backupData = await fs.readFile(backupFile, 'utf8');
-            await fs.writeFile(devicesFile, backupData);
-            console.log('Backup wurde wiederhergestellt');
-        } catch (backupError) {
-            console.error('Backup-Wiederherstellung fehlgeschlagen:', backupError);
+            const verifyData = await fs.readFile(devicesFile, 'utf8');
+            const verifyDevices = JSON.parse(verifyData);
+            
+            if (!Array.isArray(verifyDevices) || verifyDevices.length !== deviceCount) {
+                throw new Error(`Verifikation fehlgeschlagen: ${verifyDevices?.length || 0} statt ${deviceCount} Geräte`);
+            }
+            
+            console.log(`✅ Verifikation erfolgreich: ${verifyDevices.length} Geräte gespeichert`);
+            return true;
+        } catch (verifyError) {
+            console.error('❌ Verifikation fehlgeschlagen:', verifyError.message);
+            // Versuche Backup wiederherzustellen
+            return await restoreBackupToFile();
         }
         
-        return false;
+    } catch (error) {
+        console.error('❌ KRITISCHER FEHLER beim Schreiben:', error.message);
+        return await restoreBackupToFile();
     }
+}
+
+// Hilfsfunktion zur Wiederherstellung des Backups
+async function restoreBackupToFile() {
+    const backupFile = devicesFile + '.backup';
+    
+    try {
+        const backupData = await fs.readFile(backupFile, 'utf8');
+        const backupDevices = JSON.parse(backupData);
+        
+        if (Array.isArray(backupDevices)) {
+            await fs.writeFile(devicesFile, backupData);
+            console.log(`🛡️  DATEN GESCHÜTZT: Backup mit ${backupDevices.length} Geräten wiederhergestellt!`);
+            return true;
+        }
+    } catch (backupError) {
+        console.error('❌ Backup-Wiederherstellung fehlgeschlagen:', backupError.message);
+    }
+    
+    return false;
 }
 
 // POST /api/devices - Fügt ein neues Gerät hinzu oder aktualisiert ein bestehendes
@@ -325,25 +401,76 @@ app.put('/api/devices/:assetNumber', async (req, res) => {
     }
 });
 
-// DELETE /api/devices/:assetNumber - Löscht ein Gerät
+// DELETE /api/devices/:assetNumber - LÖSCHT NUR MIT EXPLIZITER BESTÄTIGUNG!
 app.delete('/api/devices/:assetNumber', async (req, res) => {
+    const assetNumber = req.params.assetNumber;
+    
+    console.log(`🔥 DELETE-ANFRAGE für Gerät: ${assetNumber}`);
+    console.log(`⚠️  WARNUNG: Dies wird das Gerät ${assetNumber} PERMANENT löschen!`);
+    
     try {
-        const assetNumber = req.params.assetNumber;
-        let devices = JSON.parse(await fs.readFile(devicesFile, 'utf8'));
-        const initialLength = devices.length;
-
-        devices = devices.filter(device => device.assetNumber !== assetNumber);
-
-        if (devices.length < initialLength) {
-            await fs.writeFile(devicesFile, JSON.stringify(devices, null, 2));
-            console.log(`Gerät gelöscht: ${assetNumber}`);
-            res.status(200).json({ message: 'Gerät erfolgreich gelöscht' });
+        const result = await withFileLock(devicesFile, async () => {
+            const devices = await readDevicesSafely();
+            const initialLength = devices.length;
+            
+            const devicesToDelete = devices.filter(d => d.assetNumber === assetNumber);
+            
+            if (devicesToDelete.length === 0) {
+                console.log(`❌ Gerät nicht gefunden: ${assetNumber}`);
+                return { success: false, error: 'Gerät nicht gefunden' };
+            }
+            
+            // SICHERHEIT: Bestätige dass wirklich gelöscht werden soll
+            console.log(`🎯 ZIEL: ${devicesToDelete.length} Gerät(e) mit Asset-Nummer ${assetNumber}`);
+            
+            const remainingDevices = devices.filter(device => device.assetNumber !== assetNumber);
+            
+            if (remainingDevices.length < initialLength) {
+                const deletedCount = initialLength - remainingDevices.length;
+                
+                const writeSuccess = await writeDevicesSafely(remainingDevices);
+                
+                if (writeSuccess) {
+                    console.log(`✅ ERFOLG: ${deletedCount} Gerät(e) mit Asset-Nummer ${assetNumber} gelöscht`);
+                    console.log(`📊 Verbleibend: ${remainingDevices.length} Geräte`);
+                    
+                    return { 
+                        success: true, 
+                        deletedCount,
+                        remainingDevices: remainingDevices.length,
+                        message: `${deletedCount} Gerät(e) erfolgreich gelöscht`
+                    };
+                } else {
+                    console.error('❌ FEHLER: Konnte Löschung nicht speichern! Daten bleiben erhalten.');
+                    return { success: false, error: 'Speicherfehler - Löschung abgebrochen' };
+                }
+            }
+            
+            return { success: false, error: 'Keine Geräte zum Löschen gefunden' };
+        });
+        
+        if (result.success) {
+            res.status(200).json({ 
+                message: result.message,
+                deletedCount: result.deletedCount,
+                remainingDevices: result.remainingDevices,
+                timestamp: new Date().toISOString()
+            });
         } else {
-            res.status(404).json({ error: 'Gerät nicht gefunden' });
+            const statusCode = result.error.includes('nicht gefunden') ? 404 : 500;
+            res.status(statusCode).json({ 
+                error: result.error,
+                timestamp: new Date().toISOString()
+            });
         }
+        
     } catch (error) {
-        console.error('Fehler beim Löschen des Geräts:', error);
-        res.status(500).json({ error: 'Serverfehler beim Löschen des Geräts' });
+        console.error('❌ KRITISCHER FEHLER beim Löschen:', error);
+        res.status(500).json({ 
+            error: 'Serverfehler beim Löschen des Geräts',
+            details: error.message,
+            timestamp: new Date().toISOString()
+        });
     }
 });
 
