@@ -278,12 +278,30 @@ async function checkSSLCertificates() {
 app.get('/api/devices', async (req, res) => {
     try {
         const [rows] = await dbPool.execute('SELECT * FROM devices ORDER BY timestamp DESC');
-        const devices = rows.map(device => ({
-            ...device,
-            gpu: typeof device.gpu === 'string' ? JSON.parse(device.gpu) : (device.gpu || []),
-            network: typeof device.network === 'string' ? JSON.parse(device.network) : (device.network || {}),
-            drives: typeof device.drives === 'string' ? JSON.parse(device.drives) : (device.drives || { localDrives: [], otherDrives: [], networkDrives: [] })
-        }));
+        const devices = rows.map(device => {
+            let gpu, network, drives;
+            try {
+                gpu = typeof device.gpu === 'string' ? JSON.parse(device.gpu) : (device.gpu || []);
+            } catch {
+                gpu = [];
+            }
+            try {
+                network = typeof device.network === 'string' ? JSON.parse(device.network) : (device.network || {});
+            } catch {
+                network = {};
+            }
+            try {
+                drives = typeof device.drives === 'string' ? JSON.parse(device.drives) : (device.drives || { localDrives: [], otherDrives: [], networkDrives: [] });
+            } catch {
+                drives = { localDrives: [], otherDrives: [], networkDrives: [] };
+            }
+            return {
+                ...device,
+                gpu,
+                network,
+                drives
+            };
+        });
         res.json(devices);
     } catch (error) {
         console.error('Fehler beim Abrufen der Geräte:', error);
@@ -307,7 +325,16 @@ app.post('/api/devices', async (req, res) => {
         
         if (existingRows.length > 0) {
             const oldDevice = existingRows[0];
-            const oldDrives = oldDevice.drives ? JSON.parse(oldDevice.drives) : { localDrives: [], otherDrives: [], networkDrives: [] };
+            let oldDrives;
+            if (typeof oldDevice.drives === 'string') {
+                try {
+                    oldDrives = JSON.parse(oldDevice.drives);
+                } catch {
+                    oldDrives = { localDrives: [], otherDrives: [], networkDrives: [] };
+                }
+            } else {
+                oldDrives = oldDevice.drives || { localDrives: [], otherDrives: [], networkDrives: [] };
+            }
             
             mergedDrives = {
                 localDrives: newDevice.drives?.localDrives || [],
@@ -477,10 +504,10 @@ app.put('/api/devices/:assetNumber', async (req, res) => {
             updateData.ramGB !== undefined ? updateData.ramGB : existingDevice.ramGB,
             updateData.cores !== undefined ? updateData.cores : existingDevice.cores,
             updateData.logicalProc !== undefined ? updateData.logicalProc : existingDevice.logicalProc,
-            updateData.gpu !== undefined ? JSON.stringify(updateData.gpu) : existingDevice.gpu,
+            updateData.gpu !== undefined ? JSON.stringify(updateData.gpu) : (typeof existingDevice.gpu === 'string' ? existingDevice.gpu : JSON.stringify(existingDevice.gpu || [])),
             updateData.biosVersion !== undefined ? updateData.biosVersion : existingDevice.biosVersion,
-            updateData.network !== undefined ? JSON.stringify(updateData.network) : existingDevice.network,
-            updateData.drives !== undefined ? JSON.stringify(updateData.drives) : existingDevice.drives,
+            updateData.network !== undefined ? JSON.stringify(updateData.network) : (typeof existingDevice.network === 'string' ? existingDevice.network : JSON.stringify(existingDevice.network || {})),
+            updateData.drives !== undefined ? JSON.stringify(updateData.drives) : (typeof existingDevice.drives === 'string' ? existingDevice.drives : JSON.stringify(existingDevice.drives || { localDrives: [], otherDrives: [], networkDrives: [] })),
             updateData.user !== undefined ? updateData.user : existingDevice.user,
             updateData.location !== undefined ? updateData.location : existingDevice.location,
             updateData.notes !== undefined ? updateData.notes : existingDevice.notes,
