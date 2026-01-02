@@ -3764,9 +3764,10 @@ PowerShell Script
 
 <div class="filter-group">
     <label class="filter-label">Benutzer *</label>
-    <select class="filter-input" id="new-device-user" required>
+    <input type="text" class="filter-input" id="new-device-user" list="user-suggestions" required placeholder="Benutzer auswählen oder eingeben...">
+    <datalist id="user-suggestions">
         <option value="">Benutzer auswählen oder eingeben...</option>
-    </select>
+    </datalist>
 </div>
 
 <div class="filter-group" style="grid-column: span 2;">
@@ -4339,22 +4340,22 @@ document.addEventListener('DOMContentLoaded', function() {
         document.getElementById('add-device-button').addEventListener('click', () => {
             // Generiere eine neue Asset-Nummer, wenn das Modal geöffnet wird
             document.getElementById('new-device-assetId').value = generateAssetNumber();
-            
-            // Fülle die Benutzer-Auswahl mit vorhandenen Benutzern
-            const userSelect = document.getElementById('new-device-user');
-            userSelect.innerHTML = '';
-            
+
+            // Fülle die Benutzer-Vorschläge mit vorhandenen Benutzern
+            const userDatalist = document.getElementById('user-suggestions');
+            userDatalist.innerHTML = '';
+
             // Sammle alle einzigartigen Benutzer aus den Gerätedaten
             const uniqueUsers = [...new Set(window.deviceData.map(device => device.user).filter(user => user))];
-            
-            // Füge die Benutzer zur Auswahl hinzu
+
+            // Füge die Benutzer zur Vorschlagsliste hinzu
             uniqueUsers.forEach(user => {
                 const option = document.createElement('option');
                 option.value = user;
                 option.textContent = user;
-                userSelect.appendChild(option);
+                userDatalist.appendChild(option);
             });
-            
+
             // Zeige das Modal
             document.getElementById('add-device-modal').classList.add('active');
         });
@@ -5952,12 +5953,24 @@ document.addEventListener('DOMContentLoaded', function() {
     }
 
     /**
+     * Vorkonfigurierte IP-Pools (werden immer angezeigt, auch wenn keine Geräte vorhanden sind)
+     */
+    const predefinedIPPools = {
+        '10.10.16': { network: '10.10.16.0', subnet: '255.255.255.0', range: 254, usedIPs: 0, devices: [] },
+        '10.10.17': { network: '10.10.17.0', subnet: '255.255.255.0', range: 254, usedIPs: 0, devices: [] },
+        '10.10.18': { network: '10.10.18.0', subnet: '255.255.255.0', range: 254, usedIPs: 0, devices: [] },
+        '10.10.19': { network: '10.10.19.0', subnet: '255.255.255.0', range: 254, usedIPs: 0, devices: [] },
+        '192.168.1': { network: '192.168.1.0', subnet: '255.255.255.0', range: 254, usedIPs: 0, devices: [] },
+        '192.168.2': { network: '192.168.2.0', subnet: '255.255.255.0', range: 254, usedIPs: 0, devices: [] }
+    };
+
+    /**
      * Verbesserte Funktion zum Erkennen von IP-Pools.
      * @param {Array} deviceData - Die Gerätedaten.
      * @returns {object} - Ein Objekt, das die erkannten Pools enthält.
      */
     function detectIPPools(deviceData) {
-        const pools = {};
+        const pools = { ...predefinedIPPools };
         deviceData.forEach(device => {
             if (device.network && Array.isArray(device.network)) {
                 device.network.forEach(net => {
@@ -5974,12 +5987,12 @@ document.addEventListener('DOMContentLoaded', function() {
                                     devices: []
                                 };
                             }
-                            
+
                             // IPs des Geräts als Set für schnellen Lookup speichern
                             if (!device.ips) device.ips = new Set();
                             device.ips.add(net.IPAddress);
 
-                            // Gerät nur einmal pro Pool hinzufügen
+                            // Gerät nur einmal pro Pool hinzufügen (für neue und vorkonfigurierte Pools)
                             if (!pools[network].devices.some(d => d.assetNumber === device.assetNumber)) {
                                 pools[network].devices.push(device);
                             }

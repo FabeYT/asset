@@ -512,33 +512,22 @@ try {
     
     # Daten sammeln und zusammenstellen
     $systemData = New-SystemData
+
+    # Daten automatisch an Server senden (ohne Bestätigung)
+    $success = Send-DataToServer -Data $systemData
     
-    # Zusammenfassung anzeigen
-    Show-Summary -Data $systemData
-    
-    # Benutzerabfrage
-    Write-Host "`nMöchten Sie die Daten an den Server senden?" -ForegroundColor Yellow
-    $confirmation = Read-Host "  (J/N) [Standard: J]"
-    
-    if ($confirmation -ne 'N' -and $confirmation -ne 'n') {
-        # Daten an Server senden
-        $success = Send-DataToServer -Data $systemData
-        
-        if ($success) {
-            Write-Host "`n" + ("=" * 60) -ForegroundColor Green
-            Write-Host "ERFOLG: Vorgang erfolgreich abgeschlossen" -ForegroundColor White -BackgroundColor Green
-            Write-Host ("=" * 60) -ForegroundColor Green
-        } else {
-            Write-Host "`n" + ("=" * 60) -ForegroundColor Red
-            Write-Host "FEHLER: Daten konnten nicht gesendet werden" -ForegroundColor White -BackgroundColor Red
-            Write-Host ("=" * 60) -ForegroundColor Red
-            Write-Host "`nTipps:" -ForegroundColor Yellow
-            Write-Host "  1. Überprüfen Sie die Netzwerkverbindung" -ForegroundColor Gray
-            Write-Host "  2. Stellen Sie sicher, dass der Server erreichbar ist" -ForegroundColor Gray
-            Write-Host "  3. Überprüfen Sie die Server-URL: $serverIP" -ForegroundColor Gray
-        }
+    if ($success) {
+        Write-Host "`n" + ("=" * 60) -ForegroundColor Green
+        Write-Host "ERFOLG: Vorgang erfolgreich abgeschlossen" -ForegroundColor White -BackgroundColor Green
+        Write-Host ("=" * 60) -ForegroundColor Green
     } else {
-        Write-Host "`nVorgang abgebrochen. Daten wurden nicht gesendet." -ForegroundColor Yellow
+        Write-Host "`n" + ("=" * 60) -ForegroundColor Red
+        Write-Host "FEHLER: Daten konnten nicht gesendet werden" -ForegroundColor White -BackgroundColor Red
+        Write-Host ("=" * 60) -ForegroundColor Red
+        Write-Host "`nTipps:" -ForegroundColor Yellow
+        Write-Host "  1. Überprüfen Sie die Netzwerkverbindung" -ForegroundColor Gray
+        Write-Host "  2. Stellen Sie sicher, dass der Server erreichbar ist" -ForegroundColor Gray
+        Write-Host "  3. Überprüfen Sie die Server-URL: $serverIP" -ForegroundColor Gray
     }
 }
 catch {
