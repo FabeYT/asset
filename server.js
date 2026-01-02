@@ -1,139 +1,31 @@
 const express = require('express');
 const https = require('https');
 const http = require('http');
-const fs = require('fs');
+const fs = require('fs').promises;
 const path = require('path');
 const os = require('os');
+require('dotenv').config();
+const mysql = require('mysql2/promise');
 
 const app = express();
-const PORT_HTTP = process.env.PORT || 2000; // Standard HTTP Port
-const PORT_HTTP_80 = 80; // Port 80 für Zugriff ohne Portnummer
-const PORT_HTTPS = 443; // Standard HTTPS Port (443 statt 2001)
+const PORT_HTTP = process.env.PORT || 2000;
+const PORT_HTTP_80 = 80;
+const PORT_HTTPS = 443;
 const clients = [];
-const DEBUG = process.env.DEBUG === 'true'; // Debug-Logging aktivieren mit DEBUG=true
 
-// Pfad zur devices.json Datei im öffentlichen Verzeichnis (ABSOLUTER PFAD!)
-const __filename = process.argv[1];
-const __dirname = path.dirname(__filename);
-const devicesFile = path.resolve(__dirname, 'public', 'devices.json');
+// MySQL Datenbank-Konfiguration
+const dbConfig = {
+    host: process.env.DB_HOST || 'localhost',
+    user: process.env.DB_USER || 'root',
+    password: process.env.DB_PASSWORD || '',
+    database: process.env.DB_NAME || 'asset_management',
+    port: process.env.DB_PORT || 3306
+};
 
-console.log('📁 Working Directory:', process.cwd());
-console.log('📁 Server Directory:', __dirname);
-console.log('📁 Devices File:', devicesFile);
-console.log('🖥️  Platform:', process.platform);
-console.log('👤 User:', process.getuid ? `UID:${process.getuid()} GID:${process.getgid()}` : 'N/A');
+let dbPool;
 
-// Backup-Funktion für devices.json mit File-Locking
-async function backupDevicesFile() {
-    try {
-        const backupDir = path.join(__dirname, 'backups');
-        await fs.mkdir(backupDir, { recursive: true });
-        
-        const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-        const backupFile = path.join(backupDir, `devices-backup-${timestamp}.json`);
-        
-        await fs.copyFile(devicesFile, backupFile);
-        console.log(`✅ Backup erstellt: ${path.basename(backupFile)}`);
-        
-        // Entferne alte Backups (nur die letzten 10 behalten)
-        try {
-            const files = await fs.readdir(backupDir);
-            const backupFiles = files
-                .filter(f => f.startsWith('devices-backup-') && f.endsWith('.json'))
-                .map(f => ({ name: f, path: path.join(backupDir, f) }));
-            
-            if (backupFiles.length > 10) {
-                backupFiles.sort((a, b) => a.name.localeCompare(b.name));
-                const filesToDelete = backupFiles.slice(0, backupFiles.length - 10);
-                
-                for (const file of filesToDelete) {
-                    await fs.unlink(file.path);
-                    console.log(`🗑️  Altes Backup entfernt: ${file.name}`);
-                }
-            }
-        } catch (error) {
-            console.warn('⚠️  Konnte alte Backups nicht aufräumen:', error.message);
-        }
-    } catch (error) {
-        console.error('❌ Fehler beim Erstellen des Backups:', error);
-    }
-}
-
-// Sicheres Schreiben mit File-Locking für Linux/Ubuntu
-async function safeWriteFile(filepath, data) {
-    return new Promise((resolve, reject) => {
-        const tempFile = `${filepath}.tmp`;
-        
-        // 1. Schreibe in temporäre Datei
-        fs.writeFile(tempFile, data, { mode: 0o644 }, (writeErr) => {
-            if (writeErr) {
-                console.error('❌ Fehler beim Schreiben in temporäre Datei:', writeErr);
-                return reject(writeErr);
-            }
-            
-            // 2. Synchronisiere auf die Festplatte (wichtig für Linux!)
-            fs.open(tempFile, 'r', (openErr, fd) => {
-                if (openErr) {
-                    return reject(openErr);
-                }
-                
-                fs.fsync(fd, (syncErr) => {
-                    fs.close(fd, (closeErr) => {
-                        // Ignoriere fsync/close errors, der rename ist wichtiger
-                    });
-                    
-                    if (syncErr) {
-                        console.warn('⚠️  fsync Fehler:', syncErr.message);
-                    }
-                    
-                    // 3. Rename (atomisch auf den meisten Dateisystemen)
-                    fs.rename(tempFile, filepath, (renameErr) => {
-                        if (renameErr) {
-                            console.error('❌ Fehler beim Umbenennen der Datei:', renameErr);
-                            return reject(renameErr);
-                        }
-                        
-                        // 4. Optional: Nochmal fsync für das Verzeichnis
-                        try {
-                            const dirFd = fs.openSync(path.dirname(filepath), 'r');
-                            fs.fsyncSync(dirFd);
-                            fs.closeSync(dirFd);
-                        } catch (dirSyncErr) {
-                            // Verzeichnis-Sync ist optional
-                        }
-                        
-                        console.log(`✅ Datei sicher geschrieben: ${filepath}`);
-                        resolve();
-                    });
-                });
-            });
-        });
-    });
-}
-
-// Prüfe Datei-Berechtigungen auf Linux
-function checkFilePermissions() {
-    try {
-        if (process.platform !== 'win32') {
-            const stats = fs.statSync(devicesFile);
-            const mode = stats.mode;
-            
-            console.log(`📋 Dateiberechtigungen: ${mode.toString(8)}`);
-            console.log(`👤 Owner UID: ${stats.uid}`);
-            console.log(`👥 Group GID: ${stats.gid}`);
-            
-            // Prüfe ob die Datei beschreibbar ist
-            fs.accessSync(devicesFile, fs.constants.W_OK);
-            console.log('✅ Datei ist beschreibbar');
-        }
-    } catch (error) {
-        console.error('❌ Berechtigungsproblem:', error.message);
-        if (error.code === 'EACCES') {
-            console.error('❌ Keine Schreibberechtigung! Führe den Server mit Schreibrechten aus.');
-            console.error('💡 Lösung: chmod 666 public/devices.json');
-        }
-    }
-}
+// Pfad zur devices.json Datei (für Migration)
+const devicesFile = path.join(__dirname, 'public', 'devices.json');
 
 // Pfade für SSL Zertifikate (falls vorhanden)
 const sslOptions = {
@@ -149,6 +41,166 @@ app.use('/Bilder', express.static(path.join(__dirname, 'Bilder')));
 // JSON Body Parser Middleware für API-Anfragen
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
+
+// Funktion zum Erstellen der Datenbankverbindung
+async function createDbConnection() {
+    try {
+        dbPool = mysql.createPool({
+            ...dbConfig,
+            waitForConnections: true,
+            connectionLimit: 10,
+            queueLimit: 0
+        });
+        console.log('✅ MySQL Verbindung erfolgreich hergestellt');
+        return true;
+    } catch (error) {
+        console.error('❌ Fehler bei der MySQL Verbindung:', error);
+        return false;
+    }
+}
+
+// Funktion zum Erstellen der devices Tabelle
+async function createDevicesTable() {
+    try {
+        const createTableQuery = `
+            CREATE TABLE IF NOT EXISTS devices (
+                id INT AUTO_INCREMENT PRIMARY KEY,
+                assetNumber VARCHAR(50) UNIQUE NOT NULL,
+                manufacturer VARCHAR(100),
+                model VARCHAR(100),
+                serialNumber VARCHAR(100),
+                hostname VARCHAR(100),
+                os VARCHAR(100),
+                osVersion VARCHAR(50),
+                osArch VARCHAR(50),
+                cpu TEXT,
+                ramGB DECIMAL(10,2),
+                cores INT,
+                logicalProc INT,
+                gpu JSON,
+                biosVersion VARCHAR(100),
+                network JSON,
+                drives JSON,
+                user VARCHAR(100),
+                location VARCHAR(255),
+                notes TEXT,
+                status VARCHAR(50) DEFAULT 'in Betrieb',
+                timestamp DATETIME,
+                lastModified DATETIME,
+                modifiedBy VARCHAR(50),
+                INDEX idx_assetNumber (assetNumber),
+                INDEX idx_hostname (hostname)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+        `;
+        
+        await dbPool.execute(createTableQuery);
+        console.log('✅ Tabelle "devices" erfolgreich erstellt');
+    } catch (error) {
+        console.error('❌ Fehler beim Erstellen der Tabelle:', error);
+        throw error;
+    }
+}
+
+// Datenbankinitialisierung
+async function initializeDatabase() {
+    try {
+        const connected = await createDbConnection();
+        if (!connected) {
+            return false;
+        }
+        
+        await createDevicesTable();
+        
+        // Migration von devices.json wenn vorhanden
+        await migrateFromJson();
+        
+        return true;
+    } catch (error) {
+        console.error('❌ Fehler bei der Datenbankinitialisierung:', error);
+        return false;
+    }
+}
+
+// Migration von devices.json zur MySQL Datenbank
+async function migrateFromJson() {
+    try {
+        const data = await fs.readFile(devicesFile, 'utf8');
+        const devices = JSON.parse(data);
+        
+        if (devices.length === 0) {
+            console.log('📄 devices.json ist leer, keine Migration nötig');
+            return;
+        }
+        
+        console.log(`🔄 Beginne Migration von ${devices.length} Geräten...`);
+        
+        for (const device of devices) {
+            const insertQuery = `
+                INSERT INTO devices (
+                    id, assetNumber, manufacturer, model, serialNumber, hostname, 
+                    os, osVersion, osArch, cpu, ramGB, cores, logicalProc, gpu, 
+                    biosVersion, network, drives, user, location, notes, 
+                    status, timestamp, lastModified, modifiedBy
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON DUPLICATE KEY UPDATE
+                    manufacturer = VALUES(manufacturer),
+                    model = VALUES(model),
+                    serialNumber = VALUES(serialNumber),
+                    hostname = VALUES(hostname),
+                    os = VALUES(os),
+                    osVersion = VALUES(osVersion),
+                    osArch = VALUES(osArch),
+                    cpu = VALUES(cpu),
+                    ramGB = VALUES(ramGB),
+                    cores = VALUES(cores),
+                    logicalProc = VALUES(logicalProc),
+                    gpu = VALUES(gpu),
+                    biosVersion = VALUES(biosVersion),
+                    network = VALUES(network),
+                    drives = VALUES(drives),
+                    user = VALUES(user),
+                    location = VALUES(location),
+                    notes = VALUES(notes),
+                    status = VALUES(status),
+                    timestamp = VALUES(timestamp),
+                    lastModified = VALUES(lastModified),
+                    modifiedBy = VALUES(modifiedBy)
+            `;
+            
+            await dbPool.execute(insertQuery, [
+                device.id || null,
+                device.assetNumber,
+                device.manufacturer || null,
+                device.model || null,
+                device.serialNumber || null,
+                device.hostname || null,
+                device.os || null,
+                device.osVersion || null,
+                device.osArch || null,
+                device.cpu || null,
+                device.ramGB || null,
+                device.cores || null,
+                device.logicalProc || null,
+                JSON.stringify(device.gpu || []),
+                device.biosVersion || null,
+                JSON.stringify(device.network || {}),
+                JSON.stringify(device.drives || { localDrives: [], otherDrives: [], networkDrives: [] }),
+                device.user || null,
+                device.location || null,
+                device.notes || null,
+                device.status || 'in Betrieb',
+                device.timestamp || null,
+                device.lastModified || null,
+                device.modifiedBy || 'system'
+            ]);
+        }
+        
+        console.log('✅ Migration erfolgreich abgeschlossen');
+        console.log('💡 devices.json kann jetzt gelöscht werden');
+    } catch (error) {
+        console.log('📄 devices.json nicht gefunden oder leer, keine Migration nötig');
+    }
+}
 
 // Prüfe ob SSL Zertifikate vorhanden sind
 async function checkSSLCertificates() {
@@ -213,22 +265,17 @@ async function checkSSLCertificates() {
 // GET /api/devices - Ruft alle Geräte ab
 app.get('/api/devices', async (req, res) => {
     try {
-        const data = await fs.promises.readFile(devicesFile, 'utf8');
-        const devices = JSON.parse(data);
-        console.log(`📊 GET /api/devices - ${devices.length} Geräte geladen`);
+        const [rows] = await dbPool.execute('SELECT * FROM devices ORDER BY timestamp DESC');
+        const devices = rows.map(device => ({
+            ...device,
+            gpu: device.gpu ? JSON.parse(device.gpu) : [],
+            network: device.network ? JSON.parse(device.network) : {},
+            drives: device.drives ? JSON.parse(device.drives) : { localDrives: [], otherDrives: [], networkDrives: [] }
+        }));
         res.json(devices);
     } catch (error) {
-        console.error('❌ Fehler beim Lesen von devices.json:', error);
-        
-        if (error.code === 'ENOENT') {
-            console.log('📄 devices.json existiert nicht, gibt leere Liste zurück');
-            res.json([]);
-        } else if (error.code === 'EACCES') {
-            console.error('❌ Keine Leserechte auf devices.json!');
-            res.status(500).json({ error: 'Keine Berechtigung zum Lesen der Geräte-Daten' });
-        } else {
-            res.json([]);
-        }
+        console.error('Fehler beim Abrufen der Geräte:', error);
+        res.json([]);
     }
 });
 
@@ -236,143 +283,133 @@ app.get('/api/devices', async (req, res) => {
 app.post('/api/devices', async (req, res) => {
     try {
         console.log('Empfangene Gerätedaten:', req.body);
-
-        // Validierung: Pflichtfelder prüfen
-        const requiredFields = ['assetNumber', 'manufacturer', 'model', 'user'];
-        const missingFields = requiredFields.filter(field => !req.body[field]);
-        
-        if (missingFields.length > 0) {
-            console.error('Fehlende Pflichtfelder:', missingFields);
-            return res.status(400).json({ 
-                error: 'Fehlende Pflichtfelder', 
-                missingFields 
-            });
-        }
-
-        // Prüfe ob assetNumber vorhanden ist
-        if (!req.body.assetNumber || req.body.assetNumber.trim() === '') {
-            console.error('❌ Asset-Nummer ist leer oder nicht vorhanden');
-            console.error('Empfangene Daten:', JSON.stringify(req.body, null, 2));
-            return res.status(400).json({ error: 'Asset-Nummer darf nicht leer sein' });
-        }
-
-        // Prüfe ob assetNumber gültig ist (nicht nur aus Sonderzeichen)
-        const assetNumberClean = req.body.assetNumber.trim();
-        if (assetNumberClean.length < 3) {
-            console.error('❌ Asset-Nummer zu kurz:', assetNumberClean);
-            return res.status(400).json({ error: 'Asset-Nummer muss mindestens 3 Zeichen lang sein' });
-        }
-
         const newDevice = {
             ...req.body,
-            id: Date.now(),
-            timestamp: new Date().toISOString(),
-            lastModified: new Date().toISOString(),
-            modifiedBy: 'system'
+            timestamp: new Date().toISOString()
         };
 
-        // Stelle sicher, dass die drives-Struktur existiert
-        if (!newDevice.drives) {
-            newDevice.drives = {
-                localDrives: [],
-                otherDrives: [],
-                networkDrives: []
-            };
-        }
+        const existingQuery = 'SELECT * FROM devices WHERE assetNumber = ?';
+        const [existingRows] = await dbPool.execute(existingQuery, [newDevice.assetNumber]);
 
-        let devices = [];
-        try {
-            const data = await fs.promises.readFile(devicesFile, 'utf8');
-            devices = JSON.parse(data);
-            console.log(`📖 ${devices.length} existierende Geräte geladen`);
-        } catch (error) {
-            if (error.code === 'ENOENT') {
-                console.log('📄 devices.json existiert nicht, erstelle neue Liste.');
-                devices = [];
-            } else {
-                console.error('❌ Fehler beim Lesen von devices.json:', error);
-                return res.status(500).json({ error: 'Fehler beim Laden der Geräte-Daten' });
-            }
-        }
-
-        const existingIndex = devices.findIndex(d => d.assetNumber === newDevice.assetNumber);
-
-        if (existingIndex > -1) {
-            // Prüfe ob es ein Update-Versuch mit anderer ID ist (Doppelter Versuch)
-            if (devices[existingIndex].id !== newDevice.id) {
-                console.warn(`⚠️  Asset-Nummer ${newDevice.assetNumber} existiert bereits mit ID ${devices[existingIndex].id}`);
-                console.warn(`⚠️  Neuer Versuch mit ID ${newDevice.id}. Gerät wird nicht hinzugefügt!`);
-                return res.status(409).json({ 
-                    error: 'Asset-Nummer existiert bereits', 
-                    message: 'Ein Gerät mit dieser Asset-Nummer existiert bereits. Bitte eine andere Nummer verwenden.',
-                    existingDevice: {
-                        assetNumber: devices[existingIndex].assetNumber,
-                        hostname: devices[existingIndex].hostname,
-                        manufacturer: devices[existingIndex].manufacturer
-                    }
-                });
-            }
-
-            const oldDevice = devices[existingIndex];
+        let mergedDrives;
+        
+        if (existingRows.length > 0) {
+            const oldDevice = existingRows[0];
+            const oldDrives = oldDevice.drives ? JSON.parse(oldDevice.drives) : { localDrives: [], otherDrives: [], networkDrives: [] };
             
-            // WICHTIG: Laufwerksdaten zusammenführen
-            const mergedDrives = {
+            mergedDrives = {
                 localDrives: newDevice.drives?.localDrives || [],
                 otherDrives: newDevice.drives?.otherDrives || [],
                 networkDrives: newDevice.drives?.networkDrives || []
             };
             
-            devices[existingIndex] = {
-                ...oldDevice,
-                ...newDevice,
-                id: oldDevice.id,
-                drives: mergedDrives,
-                lastModified: new Date().toISOString(),
-                modifiedBy: 'system'
-            };
+            const updateQuery = `
+                UPDATE devices SET
+                    manufacturer = ?,
+                    model = ?,
+                    serialNumber = ?,
+                    hostname = ?,
+                    os = ?,
+                    osVersion = ?,
+                    osArch = ?,
+                    cpu = ?,
+                    ramGB = ?,
+                    cores = ?,
+                    logicalProc = ?,
+                    gpu = ?,
+                    biosVersion = ?,
+                    network = ?,
+                    drives = ?,
+                    user = ?,
+                    location = ?,
+                    notes = ?,
+                    status = ?,
+                    lastModified = ?,
+                    modifiedBy = ?
+                WHERE assetNumber = ?
+            `;
+            
+            await dbPool.execute(updateQuery, [
+                newDevice.manufacturer || null,
+                newDevice.model || null,
+                newDevice.serialNumber || null,
+                newDevice.hostname || null,
+                newDevice.os || null,
+                newDevice.osVersion || null,
+                newDevice.osArch || null,
+                newDevice.cpu || null,
+                newDevice.ramGB || null,
+                newDevice.cores || null,
+                newDevice.logicalProc || null,
+                JSON.stringify(newDevice.gpu || []),
+                newDevice.biosVersion || null,
+                JSON.stringify(newDevice.network || {}),
+                JSON.stringify(mergedDrives),
+                newDevice.user || null,
+                oldDevice.location || null,
+                oldDevice.notes || null,
+                oldDevice.status || 'in Betrieb',
+                new Date().toISOString(),
+                'system',
+                newDevice.assetNumber
+            ]);
             
             console.log(`Gerät aktualisiert: ${newDevice.assetNumber || newDevice.hostname}`);
             console.log(`Netzlaufwerke gespeichert: ${mergedDrives.networkDrives.length}`);
-            
-            // Backup vor dem Speichern erstellen
-            await backupDevicesFile();
-            
-            // Speichern mit atomarem Write für Linux
-            await safeWriteFile(devicesFile, JSON.stringify(devices, null, 2));
-            console.log('✅ devices.json erfolgreich aktualisiert.');
-            
-            res.status(200).json({ message: 'Gerät erfolgreich aktualisiert', device: devices[existingIndex] });
+            res.status(200).json({ message: 'Gerät erfolgreich aktualisiert', assetNumber: newDevice.assetNumber });
         } else {
-            // Prüfe auf Duplikate nach Seriennummer (optional, aber hilfreich)
-            if (newDevice.serialNumber) {
-                const serialDuplicate = devices.findIndex(d => 
-                    d.serialNumber && d.serialNumber === newDevice.serialNumber
-                );
-                if (serialDuplicate > -1) {
-                    console.warn(`⚠️  Seriennummer ${newDevice.serialNumber} existiert bereits bei Asset ${devices[serialDuplicate].assetNumber}`);
-                }
+            if (!newDevice.drives) {
+                newDevice.drives = {
+                    localDrives: [],
+                    otherDrives: [],
+                    networkDrives: []
+                };
             }
-
-            devices.push(newDevice);
-            console.log(`✅ Neues Gerät hinzugefügt: ${newDevice.assetNumber || newDevice.hostname}`);
-            console.log(`   Manufacturer: ${newDevice.manufacturer}`);
-            console.log(`   Model: ${newDevice.model}`);
-            console.log(`   User: ${newDevice.user}`);
-            console.log(`   ID: ${newDevice.id}`);
+            mergedDrives = newDevice.drives;
             
-            // Backup vor dem Speichern erstellen
-            await backupDevicesFile();
+            const insertQuery = `
+                INSERT INTO devices (
+                    assetNumber, manufacturer, model, serialNumber, hostname, 
+                    os, osVersion, osArch, cpu, ramGB, cores, logicalProc, gpu, 
+                    biosVersion, network, drives, user, location, notes, 
+                    status, timestamp, lastModified, modifiedBy
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            `;
             
-            // Speichern mit atomarem Write für Linux
-            await safeWriteFile(devicesFile, JSON.stringify(devices, null, 2));
-            console.log('✅ devices.json erfolgreich gespeichert.');
+            await dbPool.execute(insertQuery, [
+                newDevice.assetNumber,
+                newDevice.manufacturer || null,
+                newDevice.model || null,
+                newDevice.serialNumber || null,
+                newDevice.hostname || null,
+                newDevice.os || null,
+                newDevice.osVersion || null,
+                newDevice.osArch || null,
+                newDevice.cpu || null,
+                newDevice.ramGB || null,
+                newDevice.cores || null,
+                newDevice.logicalProc || null,
+                JSON.stringify(newDevice.gpu || []),
+                newDevice.biosVersion || null,
+                JSON.stringify(newDevice.network || {}),
+                JSON.stringify(mergedDrives),
+                newDevice.user || null,
+                newDevice.location || null,
+                newDevice.notes || null,
+                newDevice.status || 'in Betrieb',
+                newDevice.timestamp,
+                new Date().toISOString(),
+                'system'
+            ]);
             
-            res.status(201).json({ message: 'Gerät erfolgreich hinzugefügt', device: newDevice });
+            console.log(`Neues Gerät hinzugefügt: ${newDevice.assetNumber || newDevice.hostname}`);
+            console.log(`Netzlaufwerke gespeichert: ${mergedDrives.networkDrives.length}`);
+            res.status(201).json({ message: 'Gerät erfolgreich hinzugefügt', assetNumber: newDevice.assetNumber });
         }
 
     } catch (error) {
-        console.error('❌ Fehler beim Verarbeiten der Gerätedaten:', error);
-        res.status(500).json({ error: 'Serverfehler beim Speichern der Gerätedaten: ' + error.message });
+        console.error('Fehler beim Verarbeiten der Gerätedaten:', error);
+        res.status(500).json({ error: 'Serverfehler beim Speichern der Gerätedaten' });
     }
 });
 
@@ -380,34 +417,71 @@ app.post('/api/devices', async (req, res) => {
 app.put('/api/devices/:assetNumber', async (req, res) => {
     try {
         const assetNumber = req.params.assetNumber;
-        console.log(`📝 PUT /api/devices/${assetNumber}`);
         
-        let devices = JSON.parse(await fs.promises.readFile(devicesFile, 'utf8'));
+        const [rows] = await dbPool.execute('SELECT * FROM devices WHERE assetNumber = ?', [assetNumber]);
         
-        const deviceIndex = devices.findIndex(d => d.assetNumber === assetNumber);
-        
-        if (deviceIndex === -1) {
-            console.error(`❌ Gerät nicht gefunden: ${assetNumber}`);
+        if (rows.length === 0) {
             return res.status(404).json({ error: 'Gerät nicht gefunden' });
         }
         
-        devices[deviceIndex] = {
-            ...devices[deviceIndex],
-            ...req.body,
-            lastModified: new Date().toISOString(),
-            modifiedBy: 'system'
-        };
+        const existingDevice = rows[0];
+        const updateData = { ...req.body };
         
-        // Backup vor dem Speichern
-        await backupDevicesFile();
+        const updateQuery = `
+            UPDATE devices SET
+                manufacturer = ?,
+                model = ?,
+                serialNumber = ?,
+                hostname = ?,
+                os = ?,
+                osVersion = ?,
+                osArch = ?,
+                cpu = ?,
+                ramGB = ?,
+                cores = ?,
+                logicalProc = ?,
+                gpu = ?,
+                biosVersion = ?,
+                network = ?,
+                drives = ?,
+                user = ?,
+                location = ?,
+                notes = ?,
+                status = ?,
+                lastModified = ?,
+                modifiedBy = ?
+            WHERE assetNumber = ?
+        `;
         
-        // Speichern mit atomarem Write für Linux
-        await safeWriteFile(devicesFile, JSON.stringify(devices, null, 2));
-        console.log(`✅ Gerät aktualisiert (PUT): ${assetNumber}`);
+        await dbPool.execute(updateQuery, [
+            updateData.manufacturer !== undefined ? updateData.manufacturer : existingDevice.manufacturer,
+            updateData.model !== undefined ? updateData.model : existingDevice.model,
+            updateData.serialNumber !== undefined ? updateData.serialNumber : existingDevice.serialNumber,
+            updateData.hostname !== undefined ? updateData.hostname : existingDevice.hostname,
+            updateData.os !== undefined ? updateData.os : existingDevice.os,
+            updateData.osVersion !== undefined ? updateData.osVersion : existingDevice.osVersion,
+            updateData.osArch !== undefined ? updateData.osArch : existingDevice.osArch,
+            updateData.cpu !== undefined ? updateData.cpu : existingDevice.cpu,
+            updateData.ramGB !== undefined ? updateData.ramGB : existingDevice.ramGB,
+            updateData.cores !== undefined ? updateData.cores : existingDevice.cores,
+            updateData.logicalProc !== undefined ? updateData.logicalProc : existingDevice.logicalProc,
+            updateData.gpu !== undefined ? JSON.stringify(updateData.gpu) : existingDevice.gpu,
+            updateData.biosVersion !== undefined ? updateData.biosVersion : existingDevice.biosVersion,
+            updateData.network !== undefined ? JSON.stringify(updateData.network) : existingDevice.network,
+            updateData.drives !== undefined ? JSON.stringify(updateData.drives) : existingDevice.drives,
+            updateData.user !== undefined ? updateData.user : existingDevice.user,
+            updateData.location !== undefined ? updateData.location : existingDevice.location,
+            updateData.notes !== undefined ? updateData.notes : existingDevice.notes,
+            updateData.status !== undefined ? updateData.status : existingDevice.status,
+            new Date().toISOString(),
+            'system',
+            assetNumber
+        ]);
         
-        res.status(200).json({ message: 'Gerät erfolgreich aktualisiert', device: devices[deviceIndex] });
+        console.log(`Gerät aktualisiert (PUT): ${assetNumber}`);
+        res.status(200).json({ message: 'Gerät erfolgreich aktualisiert', assetNumber });
     } catch (error) {
-        console.error('❌ Fehler beim Aktualisieren des Geräts (PUT):', error);
+        console.error('Fehler beim Aktualisieren des Geräts (PUT):', error);
         res.status(500).json({ error: 'Serverfehler beim Aktualisieren des Geräts' });
     }
 });
@@ -416,27 +490,17 @@ app.put('/api/devices/:assetNumber', async (req, res) => {
 app.delete('/api/devices/:assetNumber', async (req, res) => {
     try {
         const assetNumber = req.params.assetNumber;
-        console.log(`🗑️  DELETE /api/devices/${assetNumber}`);
         
-        let devices = JSON.parse(await fs.promises.readFile(devicesFile, 'utf8'));
-        const initialLength = devices.length;
-
-        devices = devices.filter(device => device.assetNumber !== assetNumber);
-
-        if (devices.length < initialLength) {
-            // Backup vor dem Speichern
-            await backupDevicesFile();
-            
-            // Speichern mit atomarem Write für Linux
-            await safeWriteFile(devicesFile, JSON.stringify(devices, null, 2));
-            console.log(`✅ Gerät gelöscht: ${assetNumber}`);
+        const [result] = await dbPool.execute('DELETE FROM devices WHERE assetNumber = ?', [assetNumber]);
+        
+        if (result.affectedRows > 0) {
+            console.log(`Gerät gelöscht: ${assetNumber}`);
             res.status(200).json({ message: 'Gerät erfolgreich gelöscht' });
         } else {
-            console.error(`❌ Gerät zum Löschen nicht gefunden: ${assetNumber}`);
             res.status(404).json({ error: 'Gerät nicht gefunden' });
         }
     } catch (error) {
-        console.error('❌ Fehler beim Löschen des Geräts:', error);
+        console.error('Fehler beim Löschen des Geräts:', error);
         res.status(500).json({ error: 'Serverfehler beim Löschen des Geräts' });
     }
 });
@@ -458,112 +522,6 @@ app.get('/api/server-info', (req, res) => {
     });
 });
 
-// Diagnose-Endpunkt
-app.get('/api/diagnose', async (req, res) => {
-    const diagnosis = {
-        timestamp: new Date().toISOString(),
-        platform: process.platform,
-        nodeVersion: process.version,
-        workingDirectory: process.cwd(),
-        serverDirectory: __dirname,
-        devicesFile: devicesFile,
-        fileSystem: {}
-    };
-    
-    // Prüfe devices.json
-    try {
-        const stats = await fs.promises.stat(devicesFile);
-        diagnosis.fileSystem.devicesFile = {
-            exists: true,
-            size: stats.size,
-            mode: stats.mode.toString(8),
-            uid: stats.uid,
-            gid: stats.gid,
-            canRead: true,
-            canWrite: true
-        };
-        
-        // Prüfe Leserechte
-        try {
-            await fs.promises.access(devicesFile, fs.constants.R_OK);
-            diagnosis.fileSystem.devicesFile.canRead = true;
-        } catch (e) {
-            diagnosis.fileSystem.devicesFile.canRead = false;
-            diagnosis.fileSystem.devicesFile.readError = e.message;
-        }
-        
-        // Prüfe Schreibrechte
-        try {
-            await fs.promises.access(devicesFile, fs.constants.W_OK);
-            diagnosis.fileSystem.devicesFile.canWrite = true;
-        } catch (e) {
-            diagnosis.fileSystem.devicesFile.canWrite = false;
-            diagnosis.fileSystem.devicesFile.writeError = e.message;
-        }
-        
-        // Prüfe JSON-Validität
-        try {
-            const data = await fs.promises.readFile(devicesFile, 'utf8');
-            const devices = JSON.parse(data);
-            diagnosis.fileSystem.devicesFile.validJson = true;
-            diagnosis.fileSystem.devicesFile.deviceCount = devices.length;
-        } catch (e) {
-            diagnosis.fileSystem.devicesFile.validJson = false;
-            diagnosis.fileSystem.devicesFile.jsonError = e.message;
-        }
-        
-    } catch (e) {
-        diagnosis.fileSystem.devicesFile = {
-            exists: false,
-            error: e.message
-        };
-    }
-    
-    // Prüfe Backup-Verzeichnis
-    try {
-        const backupDir = path.join(__dirname, 'backups');
-        const stats = await fs.promises.stat(backupDir);
-        const files = await fs.promises.readdir(backupDir);
-        const backupFiles = files.filter(f => f.startsWith('devices-backup-') && f.endsWith('.json'));
-        
-        diagnosis.fileSystem.backups = {
-            exists: true,
-            mode: stats.mode.toString(8),
-            backupCount: backupFiles.length
-        };
-    } catch (e) {
-        diagnosis.fileSystem.backups = {
-            exists: false,
-            error: e.message
-        };
-    }
-    
-    res.json(diagnosis);
-});
-
-// Reparatur-Endpunkt
-app.post('/api/repair', async (req, res) => {
-    if (process.platform === 'win32') {
-        return res.status(400).json({ 
-            error: 'Diese Funktion ist nur für Linux/Ubuntu verfügbar',
-            message: 'Auf Windows sind keine Berechtigungs-Reparaturen nötig'
-        });
-    }
-    
-    try {
-        await repairFilePermissions();
-        res.json({ 
-            success: true,
-            message: 'Berechtigungen erfolgreich repariert'
-        });
-    } catch (error) {
-        res.status(500).json({ 
-            error: 'Reparatur fehlgeschlagen', 
-            message: error.message 
-        });
-    }
-});
-
 // Hilfsfunktion zum Finden aller lokalen IPv4-Adressen
 function getAllLocalIps() {
     const interfaces = os.networkInterfaces();
@@ -578,105 +536,17 @@ function getAllLocalIps() {
     return ips;
 }
 
-// Funktion zum Reparieren der Dateiberechtigungen (nur Linux)
-async function repairFilePermissions() {
-    if (process.platform === 'win32') {
-        console.log('ℹ️  Windows erkannt, kein Berechtigungs-Check nötig');
-        return;
-    }
-    
-    try {
-        console.log('🔧 Prüfe und repariere Dateiberechtigungen...');
-        
-        // Stelle sicher, dass das public Verzeichnis die richtigen Berechtigungen hat
-        const publicDir = path.join(__dirname, 'public');
-        await fs.promises.chmod(publicDir, 0o755);
-        console.log('✅ public/ Verzeichnis: 755');
-        
-        // Prüfe ob devices.json existiert
-        try {
-            await fs.promises.access(devicesFile);
-            // Setze Berechtigungen auf 666 (rw-rw-rw-)
-            await fs.promises.chmod(devicesFile, 0o666);
-            console.log('✅ devices.json: 666');
-        } catch (error) {
-            console.log('📄 devices.json existiert noch nicht, wird bei Bedarf erstellt');
-        }
-        
-        // Backup-Verzeichnis
-        const backupDir = path.join(__dirname, 'backups');
-        await fs.promises.chmod(backupDir, 0o755);
-        console.log('✅ backups/ Verzeichnis: 755');
-        
-        console.log('✅ Berechtigungen erfolgreich repariert');
-    } catch (error) {
-        console.error('❌ Fehler beim Reparieren der Berechtigungen:', error);
-        console.error('💡 Versuche: sudo chmod -R 755 public && sudo chmod 666 public/devices.json');
-    }
-}
-
-// Funktion zur Initialisierung der devices.json-Datei
-async function initializeDevicesFile() {
-    try {
-        await fs.promises.access(devicesFile);
-        console.log('✅ devices.json gefunden.');
-        
-        // Prüfe ob die Datei gültiges JSON enthält
-        const data = await fs.promises.readFile(devicesFile, 'utf8');
-        JSON.parse(data);
-        console.log('✅ devices.json enthält gültiges JSON.');
-        
-        // Prüfe Berechtigungen auf Linux
-        checkFilePermissions();
-    } catch (error) {
-        if (error.code === 'ENOENT') {
-            console.log('📄 devices.json nicht gefunden. Erstelle neue Datei...');
-            await safeWriteFile(devicesFile, JSON.stringify([], null, 2));
-            console.log('✅ devices.json erfolgreich erstellt.');
-        } else {
-            console.error('❌ devices.json ist beschädigt oder enthält ungültiges JSON:', error.message);
-            
-            // Versuche Backup wiederherzustellen
-            const backupDir = path.join(__dirname, 'backups');
-            try {
-                const files = await fs.promises.readdir(backupDir);
-                const backupFiles = files
-                    .filter(f => f.startsWith('devices-backup-') && f.endsWith('.json'))
-                    .map(f => ({ name: f, path: path.join(backupDir, f) }))
-                    .sort((a, b) => b.name.localeCompare(a.name));
-                
-                if (backupFiles.length > 0) {
-                    console.log(`🔄 Versuche Backup wiederherzustellen: ${backupFiles[0].name}`);
-                    await fs.promises.copyFile(backupFiles[0].path, devicesFile);
-                    console.log('✅ Backup erfolgreich wiederhergestellt!');
-                } else {
-                    console.log('⚠️  Kein Backup gefunden. Erstelle neue leere Datei...');
-                    await safeWriteFile(devicesFile, JSON.stringify([], null, 2));
-                }
-            } catch (backupError) {
-                console.error('❌ Konnte Backup nicht wiederherstellen:', backupError.message);
-                console.log('📄 Erstelle neue leere devices.json...');
-                await safeWriteFile(devicesFile, JSON.stringify([], null, 2));
-            }
-        }
-    }
-    
-    // Backup-Verzeichnis erstellen
-    const backupDir = path.join(__dirname, 'backups');
-    await fs.promises.mkdir(backupDir, { recursive: true });
-    console.log('✅ Backup-Verzeichnis vorhanden.');
-}
+// Hilfsfunktion zum Finden aller lokalen IPv4-Adressen
 
 // ==================== Server-Start ====================
 
 async function startServer() {
     await checkSSLCertificates();
-    await initializeDevicesFile();
     
-    // Auf Linux: Prüfe und repariere Berechtigungen
-    if (process.platform !== 'win32') {
-        console.log('🔧 Linux/Ubuntu erkannt - prüfe Berechtigungen...');
-        await repairFilePermissions();
+    const dbInitialized = await initializeDatabase();
+    if (!dbInitialized) {
+        console.error('❌ Datenbank konnte nicht initialisiert werden. Server wird nicht gestartet.');
+        process.exit(1);
     }
     
     const localIps = getAllLocalIps();
@@ -751,23 +621,14 @@ async function startServer() {
         });
     }
     
-// Graceful Shutdown
-process.on('SIGINT', () => {
-    console.log('\n==================================================');
-    console.log('🛑 Server wird heruntergefahren...');
-    console.log('✅ Server erfolgreich heruntergefahren.');
-    console.log('==================================================');
-    process.exit(0);
-});
-
-// Globaler Fehler-Handler für Express
-app.use((err, req, res, next) => {
-    console.error('❌ Unerwarteter Fehler:', err);
-    res.status(500).json({ 
-        error: 'Interner Serverfehler', 
-        message: err.message 
+    // Graceful Shutdown
+    process.on('SIGINT', () => {
+        console.log('\n==================================================');
+        console.log('🛑 Server wird heruntergefahren...');
+        console.log('✅ Server erfolgreich heruntergefahren.');
+        console.log('==================================================');
+        process.exit(0);
     });
-});
 }
 
 // Starte den Server

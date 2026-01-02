@@ -6879,12 +6879,12 @@ document.addEventListener('DOMContentLoaded', function() {
     function handleAddDevice(e) {
         e.preventDefault();
         
-        // Generiere eine EINDEUTIGE Asset-Nummer (Timestamp + 4-stellige Zufallszahl)
-        const timestamp = Date.now().toString(36);
-        const randomPart = Math.floor(Math.random() * 10000).toString().padStart(4, '0');
-        const assetNumber = timestamp.toUpperCase() + randomPart;
-        
-        console.log(`Generierte Asset-Nummer: ${assetNumber}`);
+        // Generiere eine 8-stellige Asset-Nummer (Zahlen und Großbuchstaben)
+        const chars = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ';
+        let assetNumber = '';
+        for (let i = 0; i < 8; i++) {
+            assetNumber += chars.charAt(Math.floor(Math.random() * chars.length));
+        }
         
         // Sammle alle Formulardaten
         const deviceType = document.querySelector('.asset-type-btn.active').getAttribute('data-type');
@@ -6899,8 +6899,8 @@ document.addEventListener('DOMContentLoaded', function() {
             location: document.getElementById('new-device-location').value,
             user: document.getElementById('new-device-user').value,
             notes: document.getElementById('new-device-notes').value,
-            purchaseDate: new Date().toISOString().split('T')[0],
-            warrantyExpiry: new Date(new Date().setFullYear(new Date().getFullYear() + 3)).toISOString().split('T')[0],
+            purchaseDate: new Date().toISOString().split('T')[0], // Heutiges Datum
+            warrantyExpiry: new Date(new Date().setFullYear(new Date().getFullYear() + 3)).toISOString().split('T')[0], // 3 Jahre Garantie
             timestamp: new Date().toISOString(),
             lastModified: new Date().toISOString(),
             modifiedBy: 'admin'
@@ -6914,6 +6914,7 @@ document.addEventListener('DOMContentLoaded', function() {
             newDevice.cores = parseInt(document.getElementById('new-device-cores').value) || 0;
             newDevice.logicalProc = parseInt(document.getElementById('new-device-logicalProc').value) || 0;
             
+            // Speicherinformationen sammeln
             newDevice.storage = [];
             document.querySelectorAll('#storage-entries .storage-entry').forEach(entry => {
                 const type = entry.querySelector('input[name="storageType"]').value;
@@ -6925,6 +6926,7 @@ document.addEventListener('DOMContentLoaded', function() {
                 }
             });
             
+            // Netzwerkinformationen sammeln
             newDevice.network = [];
             document.querySelectorAll('#network-entries .network-entry').forEach(entry => {
                 const ip = entry.querySelector('input[name="ip"]').value;
@@ -6944,6 +6946,7 @@ document.addEventListener('DOMContentLoaded', function() {
             newDevice.operationClass = document.getElementById('new-device-operationClass').value;
             newDevice.itResponsible = document.getElementById('new-device-itResponsible').value;
             
+            // Netzwerkinformationen sammeln
             newDevice.network = [];
             document.querySelectorAll('#server-network-entries .network-entry').forEach(entry => {
                 const ip = entry.querySelector('input[name="ip"]').value;
@@ -6960,6 +6963,7 @@ document.addEventListener('DOMContentLoaded', function() {
             newDevice.networkLocation = document.getElementById('new-device-networkLocation').value;
             newDevice.itResponsible = document.getElementById('new-device-itResponsible').value;
             
+            // Netzwerkinformationen sammeln
             newDevice.network = [];
             document.querySelectorAll('#network-device-network-entries .network-entry').forEach(entry => {
                 const ip = entry.querySelector('input[name="ip"]').value;
@@ -6975,8 +6979,6 @@ document.addEventListener('DOMContentLoaded', function() {
             newDevice.resolution = document.getElementById('new-device-resolution').value;
         }
         
-        console.log('Sende Gerät an Server:', newDevice);
-        
         // Sende die Daten an den Server
         fetch('/api/devices', {
             method: 'POST',
@@ -6986,20 +6988,17 @@ document.addEventListener('DOMContentLoaded', function() {
             body: JSON.stringify(newDevice)
         })
         .then(response => {
-            console.log(`Server-Antwort Status: ${response.status}`);
-            return response.json().then(data => {
-                if (!response.ok) {
-                    throw { status: response.status, data };
-                }
-                return data;
-            });
+            if (!response.ok) {
+                throw new Error('Netzwerkantwort war nicht ok');
+            }
+            return response.json();
         })
         .then(result => {
-            console.log('Gerät erfolgreich hinzugefügt:', result);
             showNotification('Erfolg', result.message, 'success');
             addConsoleMessage(`Neues Gerät ${newDevice.assetNumber} wurde hinzugefügt`, 'success');
             document.getElementById('add-device-modal').classList.remove('active');
             
+            // Daten neu laden und UI aktualisieren
             loadDeviceData().then(() => {
                 if (document.getElementById('devices').classList.contains('active')) {
                     updateDevicesTable(window.deviceData);
@@ -7011,38 +7010,23 @@ document.addEventListener('DOMContentLoaded', function() {
                 }
             });
             
+            // Formular zurücksetzen
             document.getElementById('add-device-form').reset();
         })
         .catch(error => {
             console.error('Fehler beim Hinzufügen des Geräts:', error);
-            
-            let errorMessage = 'Gerät konnte nicht hinzugefügt werden';
-            if (error.status === 409) {
-                errorMessage = `Duplikat: ${error.data.error || 'Asset-Nummer existiert bereits'}`;
-                addConsoleMessage(`Konflikt: ${error.data.message}`, 'error');
-            } else if (error.status === 400) {
-                errorMessage = `Validierungsfehler: ${error.data.error}`;
-                if (error.data.missingFields) {
-                    errorMessage += ` (${error.data.missingFields.join(', ')})`;
-                }
-                addConsoleMessage(`Fehlende Felder: ${error.data.missingFields?.join(', ')}`, 'error');
-            } else if (error.data) {
-                errorMessage = error.data.error || errorMessage;
-            }
-            
-            showNotification('Fehler', errorMessage, 'error');
-            addConsoleMessage(`Fehler: ${errorMessage}`, 'error');
+            showNotification('Fehler', 'Gerät konnte nicht hinzugefügt werden', 'error');
         });
     }
 
     function generateAssetNumber() {
-        // Generiere eine EINDEUTIGE Asset-Nummer (Timestamp + 4-stellige Zufallszahl)
-        const timestamp = Date.now().toString(36);
-        const randomPart = Math.floor(Math.random() * 10000).toString().padStart(4, '0');
-        const assetNumber = timestamp.toUpperCase() + randomPart;
-        
-        console.log(`Neue Asset-Nummer generiert: ${assetNumber}`);
-        return assetNumber;
+        // Generiere eine 8-stellige Asset-Nummer
+        const chars = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ';
+        let result = '';
+        for (let i = 0; i < 8; i++) {
+            result += chars.charAt(Math.floor(Math.random() * chars.length));
+        }
+        return result;
     }
 
     function handleEditDevice(e) {

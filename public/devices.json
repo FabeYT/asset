@@ -70,33 +70,5 @@
     "notes": "",
     "model": "21CK002UGE",
     "id": 1766044509224
-  },
-  {
-    "assetNumber": "MJWPUBZ38807",
-    "hostname": "",
-    "deviceType": "switch",
-    "serialNumber": "GJFME8433GK",
-    "manufacturer": "fsdfdsa",
-    "model": "Lenovo",
-    "status": "in Betrieb",
-    "location": "Dornach",
-    "user": "npfeffer",
-    "notes": "",
-    "purchaseDate": "2026-01-02",
-    "warrantyExpiry": "2029-01-02",
-    "timestamp": "2026-01-02T10:13:17.778Z",
-    "lastModified": "2026-01-02T10:13:17.778Z",
-    "modifiedBy": "system",
-    "firmware": "",
-    "portCount": 0,
-    "networkLocation": "",
-    "itResponsible": "",
-    "network": [],
-    "id": 1767348797778,
-    "drives": {
-      "localDrives": [],
-      "otherDrives": [],
-      "networkDrives": []
-    }
   }
 ]
