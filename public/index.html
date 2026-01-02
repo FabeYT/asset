@@ -3764,12 +3764,9 @@ PowerShell Script
 
 <div class="filter-group">
     <label class="filter-label">Benutzer *</label>
-    <div style="display: flex; gap: 10px;">
-        <select class="filter-input" id="new-device-user-select" style="flex: 1;">
-            <option value="">Vorhandenen Benutzer auswählen...</option>
-        </select>
-        <input type="text" class="filter-input" id="new-device-user-input" placeholder="Oder neuen Benutzer eingeben..." style="flex: 1;">
-    </div>
+    <select class="filter-input" id="new-device-user" required>
+        <option value="">Benutzer auswählen oder eingeben...</option>
+    </select>
 </div>
 
 <div class="filter-group" style="grid-column: span 2;">
@@ -4343,9 +4340,9 @@ document.addEventListener('DOMContentLoaded', function() {
             // Generiere eine neue Asset-Nummer, wenn das Modal geöffnet wird
             document.getElementById('new-device-assetId').value = generateAssetNumber();
             
-// Fülle die Benutzer-Auswahl mit vorhandenen Benutzern
-            const userSelect = document.getElementById('new-device-user-select');
-            userSelect.innerHTML = '<option value="">Vorhandenen Benutzer auswählen...</option>';
+            // Fülle die Benutzer-Auswahl mit vorhandenen Benutzern
+            const userSelect = document.getElementById('new-device-user');
+            userSelect.innerHTML = '';
             
             // Sammle alle einzigartigen Benutzer aus den Gerätedaten
             const uniqueUsers = [...new Set(window.deviceData.map(device => device.user).filter(user => user))];
@@ -4517,7 +4514,7 @@ document.addEventListener('DOMContentLoaded', function() {
             </div>`;
             container.appendChild(entry);
             entry.querySelector('.remove-network').addEventListener('click', () => entry.remove());
-});
+        });
 
         document.getElementById('add-storage').addEventListener('click', () => {
             const container = document.getElementById('storage-entries');
@@ -4533,9 +4530,6 @@ document.addEventListener('DOMContentLoaded', function() {
             container.appendChild(entry);
             entry.querySelector('.remove-storage').addEventListener('click', () => entry.remove());
         });
-
-        // Initialisiere Benutzer-Feld-Listener
-        setupUserFieldListeners();
     }
 
     function loadSectionData(sectionId) {
@@ -4560,44 +4554,151 @@ document.addEventListener('DOMContentLoaded', function() {
 
     // --- DATENLADEN-FUNKTIONEN ---
 
-async function loadDeviceData() {
-        // 🛡️ DATENSCHUTZ MODUS - NICHT MEHR AUTOMATISCH NEU LADEN
-        console.warn('🛡️ DATENSCHUTZ: Automatisches Datenladen deaktiviert');
-        
-        // Nur wenn keine lokalen Daten vorhanden sind, lade einmalig vom Server
-        if (!window.deviceData || window.deviceData.length === 0) {
-            console.log('📥 Lade initiale Daten vom Server...');
-            try {
-                const response = await fetch('api/devices');
-                if (!response.ok) {
-                    throw new Error('Netzwerkantwort war nicht ok');
-                }
-                let deviceData = await response.json();
-
-                // Stelle sicher, dass die Netzwerkdaten korrekt formatiert sind
-                window.deviceData = deviceData.map(device => {
-                    if (!device.network) device.network = [];
-                    else if (!Array.isArray(device.network) && device.network.IPAddress) {
-                        device.network = [device.network];
-                    }
-                    return device;
-                });
-
-                // Speichere die Daten im localStorage für Offline-Zugriff
-                localStorage.setItem('deviceData', JSON.stringify(window.deviceData));
-                console.log(`✅ Initiale Daten geladen: ${window.deviceData.length} Geräte`);
-
-                return window.deviceData;
-            } catch (error) {
-                console.error('❌ Fehler beim initialen Laden:', error);
-                window.deviceData = [];
-                return [];
+    async function loadDeviceData() {
+        try {
+            // Versuche, die Daten von der API zu laden
+            const response = await fetch('api/devices');
+            if (!response.ok) {
+                throw new Error('Netzwerkantwort war nicht ok');
             }
-        } else {
-            console.log(`📋 Verwende vorhandene lokale Daten: ${window.deviceData.length} Geräte`);
+            let deviceData = await response.json();
+
+            // Stelle sicher, dass die Netzwerkdaten korrekt formatiert sind
+            window.deviceData = deviceData.map(device => {
+                if (!device.network) device.network = [];
+                else if (!Array.isArray(device.network) && device.network.IPAddress) {
+                    device.network = [device.network];
+                }
+                return device;
+            });
+
+            // Speichere die Daten im localStorage für Offline-Zugriff
+            localStorage.setItem('deviceData', JSON.stringify(window.deviceData));
+
+            return window.deviceData;
+        } catch (error) {
+            console.error('Fehler beim Laden der Gerätedaten:', error);
+
+            // Versuche, die Daten aus dem localStorage zu laden
+            try {
+                const cachedData = localStorage.getItem('deviceData');
+                if (cachedData) {
+                    window.deviceData = JSON.parse(cachedData);
+                    showNotification('Info', 'Verwende zwischengespeicherte Gerätedaten', 'info');
+                    return window.deviceData;
+                }
+            } catch (cacheError) {
+                console.error('Fehler beim Laden aus dem Cache:', cacheError);
+            }
+
+            // Fallback auf Beispieldaten, wenn nichts anderes funktioniert
+            showNotification('Warnung', 'Verwende Beispieldaten, da keine Gerätedaten geladen werden konnten', 'warning');
+
+            window.deviceData = [
+                {
+                    assetNumber: "T86W51KP",
+                    hostname: "Beispiel-Laptop-01",
+                    deviceType: "Laptop",
+                    serialNumber: "SN123456789",
+                    manufacturer: "Dell",
+                    model: "Latitude 7420",
+                    status: "in Betrieb",
+                    location: "Büro 101",
+                    user: "Max Mustermann",
+                    purchaseDate: "2022-01-15",
+                    warrantyExpiry: "2025-01-15",
+                    cpu: "Intel Core i7-1185G7",
+                    ramGB: 16,
+                    cores: 4,
+                    logicalProc: 8,
+                    os: "Windows 11",
+                    storage: [
+                        { type: "SSD", size: 512, interface: "NVMe" }
+                    ],
+                    network: [
+                        {
+                            IPAddress: "192.168.1.100",
+                            MACAddress: "00:11:22:33:44:55",
+                            IPSubnet: "255.255.255.0"
+                        },
+                        {
+                            IPAddress: "192.168.1.101",
+                            MACAddress: "00:11:22:33:44:56",
+                            IPSubnet: "255.255.255.0"
+                        }
+                    ],
+                    notes: "Standard-Laptop für Entwickler",
+                    timestamp: new Date().toISOString(),
+                    lastModified: new Date().toISOString(),
+                    modifiedBy: "admin"
+                },
+                {
+                    assetNumber: "T86W52KP",
+                    hostname: "Beispiel-Server-01",
+                    deviceType: "Server",
+                    serialNumber: "SN987654321",
+                    manufacturer: "HP",
+                    model: "ProLiant DL380",
+                    status: "in Betrieb",
+                    location: "Serverraum A",
+                    user: "IT-Admin",
+                    purchaseDate: "2021-06-20",
+                    warrantyExpiry: "2024-06-20",
+                    cpu: "Intel Xeon Silver 4210",
+                    ramGB: 64,
+                    cores: 10,
+                    logicalProc: 20,
+                    os: "Windows Server 2019",
+                    rack: "A",
+                    slot: "5",
+                    operationClass: "Produktion",
+                    itResponsible: "IT-Admin",
+                    network: [
+                        {
+                            IPAddress: "10.10.16.10",
+                            MACAddress: "AA:BB:CC:DD:EE:FF",
+                            IPSubnet: "255.255.255.0"
+                        }
+                    ],
+                    notes: "Datenbankserver",
+                    timestamp: new Date().toISOString(),
+                    lastModified: new Date().toISOString(),
+                    modifiedBy: "admin"
+                },
+                {
+                    assetNumber: "T86W53KP",
+                    hostname: "Beispiel-PC-02",
+                    deviceType: "PC",
+                    serialNumber: "SN555666777",
+                    manufacturer: "Lenovo",
+                    model: "ThinkCentre M70q",
+                    status: "in Betrieb",
+                    location: "Büro 205",
+                    user: "Erika Musterfrau",
+                    purchaseDate: "2023-03-10",
+                    warrantyExpiry: "2026-03-10",
+                    cpu: "AMD Ryzen 5 5600G",
+                    ramGB: 32,
+                    cores: 6,
+                    logicalProc: 12,
+                    os: "Windows 11",
+                    network: [
+                        {
+                            IPAddress: "192.168.1.102",
+                            MACAddress: "10:20:30:40:50:60",
+                            IPSubnet: "255.255.255.0"
+                        }
+                    ],
+                    notes: "Arbeitsplatz im Vertrieb",
+                    timestamp: new Date().toISOString(),
+                    lastModified: new Date().toISOString(),
+                    modifiedBy: "admin"
+                }
+            ];
+
             return window.deviceData;
         }
-}
+    }
 
     // --- KERNFUNKTIONEN (Daten, UI, etc.) ---
 
@@ -5217,11 +5318,7 @@ async function loadDeviceData() {
             document.getElementById('device-modal').classList.remove('active');
             showEditDeviceModal(currentDevice);
         };
-        // DELETE-FUNKTION DEAKTIVIERT - GERÄTE SOLLEN NICHT AUTOMATISCH GELÖSCHT WERDEN
-        // document.getElementById('delete-device-btn').onclick = deleteDeviceWithPassword;
-        document.getElementById('delete-device-btn').onclick = function() {
-            alert('🛡️ LÖSCHFUNKTION DEAKTIVIERT\n\nGeräte werden aus Sicherheitsgründen nicht mehr automatisch gelöscht.\nBitte verwenden Sie die manuelle API falls nötig.');
-        };
+        document.getElementById('delete-device-btn').onclick = deleteDeviceWithPassword;
 
         document.getElementById('device-modal').classList.add('active');
     }
@@ -6779,49 +6876,15 @@ async function loadDeviceData() {
             });
     }
 
-function getUserFromFields() {
-        const userSelect = document.getElementById('new-device-user-select');
-        const userInput = document.getElementById('new-device-user-input');
-        
-        // Priorität: Eingabefeld vor Auswahlfeld
-        if (userInput.value.trim()) {
-            return userInput.value.trim();
-        } else if (userSelect.value) {
-            return userSelect.value;
-        } else {
-            return '';
-        }
-    }
-
-    // Event-Listener für Benutzer-Felder hinzufügen
-    function setupUserFieldListeners() {
-        const userSelect = document.getElementById('new-device-user-select');
-        const userInput = document.getElementById('new-device-user-input');
-        
-        // Wenn man etwas eingibt, leere die Auswahl
-        userInput.addEventListener('input', function() {
-            if (this.value.trim()) {
-                userSelect.value = '';
-            }
-        });
-        
-        // Wenn man etwas auswählt, leere das Eingabefeld
-        userSelect.addEventListener('change', function() {
-            if (this.value) {
-                userInput.value = '';
-            }
-        });
-    }
-
     function handleAddDevice(e) {
         e.preventDefault();
         
-        // Generiere eine 8-stellige Asset-Nummer (Zahlen und Großbuchstaben)
-        const chars = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ';
-        let assetNumber = '';
-        for (let i = 0; i < 8; i++) {
-            assetNumber += chars.charAt(Math.floor(Math.random() * chars.length));
-        }
+        // Generiere eine EINDEUTIGE Asset-Nummer (Timestamp + 4-stellige Zufallszahl)
+        const timestamp = Date.now().toString(36);
+        const randomPart = Math.floor(Math.random() * 10000).toString().padStart(4, '0');
+        const assetNumber = timestamp.toUpperCase() + randomPart;
+        
+        console.log(`Generierte Asset-Nummer: ${assetNumber}`);
         
         // Sammle alle Formulardaten
         const deviceType = document.querySelector('.asset-type-btn.active').getAttribute('data-type');
@@ -6834,10 +6897,10 @@ function getUserFromFields() {
             model: document.getElementById('new-device-model').value,
             status: document.getElementById('new-device-status').value,
             location: document.getElementById('new-device-location').value,
-            user: getUserFromFields(),
+            user: document.getElementById('new-device-user').value,
             notes: document.getElementById('new-device-notes').value,
-            purchaseDate: new Date().toISOString().split('T')[0], // Heutiges Datum
-            warrantyExpiry: new Date(new Date().setFullYear(new Date().getFullYear() + 3)).toISOString().split('T')[0], // 3 Jahre Garantie
+            purchaseDate: new Date().toISOString().split('T')[0],
+            warrantyExpiry: new Date(new Date().setFullYear(new Date().getFullYear() + 3)).toISOString().split('T')[0],
             timestamp: new Date().toISOString(),
             lastModified: new Date().toISOString(),
             modifiedBy: 'admin'
@@ -6851,7 +6914,6 @@ function getUserFromFields() {
             newDevice.cores = parseInt(document.getElementById('new-device-cores').value) || 0;
             newDevice.logicalProc = parseInt(document.getElementById('new-device-logicalProc').value) || 0;
             
-            // Speicherinformationen sammeln
             newDevice.storage = [];
             document.querySelectorAll('#storage-entries .storage-entry').forEach(entry => {
                 const type = entry.querySelector('input[name="storageType"]').value;
@@ -6863,7 +6925,6 @@ function getUserFromFields() {
                 }
             });
             
-            // Netzwerkinformationen sammeln
             newDevice.network = [];
             document.querySelectorAll('#network-entries .network-entry').forEach(entry => {
                 const ip = entry.querySelector('input[name="ip"]').value;
@@ -6883,7 +6944,6 @@ function getUserFromFields() {
             newDevice.operationClass = document.getElementById('new-device-operationClass').value;
             newDevice.itResponsible = document.getElementById('new-device-itResponsible').value;
             
-            // Netzwerkinformationen sammeln
             newDevice.network = [];
             document.querySelectorAll('#server-network-entries .network-entry').forEach(entry => {
                 const ip = entry.querySelector('input[name="ip"]').value;
@@ -6900,7 +6960,6 @@ function getUserFromFields() {
             newDevice.networkLocation = document.getElementById('new-device-networkLocation').value;
             newDevice.itResponsible = document.getElementById('new-device-itResponsible').value;
             
-            // Netzwerkinformationen sammeln
             newDevice.network = [];
             document.querySelectorAll('#network-device-network-entries .network-entry').forEach(entry => {
                 const ip = entry.querySelector('input[name="ip"]').value;
@@ -6916,6 +6975,8 @@ function getUserFromFields() {
             newDevice.resolution = document.getElementById('new-device-resolution').value;
         }
         
+        console.log('Sende Gerät an Server:', newDevice);
+        
         // Sende die Daten an den Server
         fetch('/api/devices', {
             method: 'POST',
@@ -6925,17 +6986,20 @@ function getUserFromFields() {
             body: JSON.stringify(newDevice)
         })
         .then(response => {
-            if (!response.ok) {
-                throw new Error('Netzwerkantwort war nicht ok');
-            }
-            return response.json();
+            console.log(`Server-Antwort Status: ${response.status}`);
+            return response.json().then(data => {
+                if (!response.ok) {
+                    throw { status: response.status, data };
+                }
+                return data;
+            });
         })
         .then(result => {
+            console.log('Gerät erfolgreich hinzugefügt:', result);
             showNotification('Erfolg', result.message, 'success');
             addConsoleMessage(`Neues Gerät ${newDevice.assetNumber} wurde hinzugefügt`, 'success');
             document.getElementById('add-device-modal').classList.remove('active');
             
-            // Daten neu laden und UI aktualisieren
             loadDeviceData().then(() => {
                 if (document.getElementById('devices').classList.contains('active')) {
                     updateDevicesTable(window.deviceData);
@@ -6947,23 +7011,38 @@ function getUserFromFields() {
                 }
             });
             
-            // Formular zurücksetzen
             document.getElementById('add-device-form').reset();
         })
         .catch(error => {
             console.error('Fehler beim Hinzufügen des Geräts:', error);
-            showNotification('Fehler', 'Gerät konnte nicht hinzugefügt werden', 'error');
+            
+            let errorMessage = 'Gerät konnte nicht hinzugefügt werden';
+            if (error.status === 409) {
+                errorMessage = `Duplikat: ${error.data.error || 'Asset-Nummer existiert bereits'}`;
+                addConsoleMessage(`Konflikt: ${error.data.message}`, 'error');
+            } else if (error.status === 400) {
+                errorMessage = `Validierungsfehler: ${error.data.error}`;
+                if (error.data.missingFields) {
+                    errorMessage += ` (${error.data.missingFields.join(', ')})`;
+                }
+                addConsoleMessage(`Fehlende Felder: ${error.data.missingFields?.join(', ')}`, 'error');
+            } else if (error.data) {
+                errorMessage = error.data.error || errorMessage;
+            }
+            
+            showNotification('Fehler', errorMessage, 'error');
+            addConsoleMessage(`Fehler: ${errorMessage}`, 'error');
         });
     }
 
     function generateAssetNumber() {
-        // Generiere eine 8-stellige Asset-Nummer
-        const chars = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ';
-        let result = '';
-        for (let i = 0; i < 8; i++) {
-            result += chars.charAt(Math.floor(Math.random() * chars.length));
-        }
-        return result;
+        // Generiere eine EINDEUTIGE Asset-Nummer (Timestamp + 4-stellige Zufallszahl)
+        const timestamp = Date.now().toString(36);
+        const randomPart = Math.floor(Math.random() * 10000).toString().padStart(4, '0');
+        const assetNumber = timestamp.toUpperCase() + randomPart;
+        
+        console.log(`Neue Asset-Nummer generiert: ${assetNumber}`);
+        return assetNumber;
     }
 
     function handleEditDevice(e) {
@@ -7375,10 +7454,37 @@ function downloadDevicePDF() {
     showNotification('Erfolg', 'PDF wurde erfolgreich erstellt', 'success');
 }
 
-// LÖSCHFUNKTION KOMPLETT DEAKTIVIERT - DATENSCHUTZ AKTIVIERT
     function deleteDeviceWithPassword() {
-        alert('🛡️ DATENSCHUTZ MODUS AKTIV\n\nDiese Funktion wurde deaktiviert, um unbeabsichtigtes Löschen von Geräten zu verhindern.\n\nGeräte können nur noch über direkte API-Aufrufe gelöscht werden.');
-        return false;
+        if (!currentDevice) return;
+        const password = prompt('Bitte geben Sie das Lösch-Passwort ein:');
+        if (password === 'ETKN2025!') {
+            fetch(`/api/devices/${currentDevice.assetNumber}`, {
+                method: 'DELETE'
+            })
+            .then(response => {
+                if (!response.ok) {
+                    throw new Error('Fehler beim Löschen des Geräts');
+                }
+                return response.json();
+            })
+            .then(result => {
+                showNotification('Erfolg', result.message, 'success');
+                addConsoleMessage(`Gerät ${currentDevice.assetNumber} wurde gelöscht`, 'success');
+                document.getElementById('device-modal').classList.remove('active');
+                // Daten neu laden und UI aktualisieren
+                loadDeviceData().then(() => {
+                    if (document.getElementById('devices').classList.contains('active')) {
+                        updateDevicesTable(window.deviceData);
+                    }
+                });
+            })
+            .catch(error => {
+                console.error('Fehler:', error);
+                showNotification('Fehler', 'Gerät konnte nicht gelöscht werden', 'error');
+            });
+        } else if (password !== null) {
+            showNotification('Fehler', 'Falsches Passwort', 'error');
+        }
     }
 
     function clearConsole() {

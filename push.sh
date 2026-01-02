@@ -1,17 +1,14 @@
 #!/bin/bash
 
-set -e  # Bei Fehler abbrechen
+# Skript zum automatischen Speichern und Pushen von Änderungen auf GitHub
 
-echo "Stage Pflichtdateien..."
-git add -f server.js public/index.html
-
-echo "Stage alle weiteren Änderungen..."
+echo "Füge alle Änderungen hinzu..."
 git add .
 
-echo "Committe (auch ohne Änderungen)..."
-git commit --allow-empty -m "Auto commit: $(date '+%Y-%m-%d %H:%M:%S')"
+echo "Committe die Änderungen..."
+git commit -m "Auto commit: $(date)"
 
 echo "Pushe auf GitHub..."
 git push origin main
 
-echo "Fertig! server.js und public/index.html wurden garantiert gepusht."
+echo "Fertig! Alle Änderungen wurden gespeichert und gepusht."
