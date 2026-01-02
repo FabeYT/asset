@@ -11,6 +11,9 @@ const PORT_HTTP_80 = 80; // Port 80 für Zugriff ohne Portnummer
 const PORT_HTTPS = 443; // Standard HTTPS Port (443 statt 2001)
 const clients = [];
 
+// Dateisperre für Race-Condition-Verhinderung
+const fileLocks = new Map();
+
 // Pfad zur devices.json Datei im öffentlichen Verzeichnis
 const devicesFile = path.join(__dirname, 'public', 'devices.json');
 
@@ -92,78 +95,204 @@ async function checkSSLCertificates() {
 // GET /api/devices - Ruft alle Geräte ab
 app.get('/api/devices', async (req, res) => {
     try {
-        const data = await fs.readFile(devicesFile, 'utf8');
-        res.json(JSON.parse(data));
+        console.log(`[${new Date().toISOString()}] GET /api/devices - Geräte werden abgerufen`);
+        
+        const devices = await withFileLock(devicesFile, async () => {
+            return await readDevicesSafely();
+        });
+        
+        console.log(`📋 ${devices.length} Geräte zurückgegeben`);
+        res.json(devices);
     } catch (error) {
-        console.error('Fehler beim Lesen von devices.json:', error);
-        res.json([]);
+        console.error('❌ Fehler beim Abrufen der Geräte:', error);
+        res.status(500).json({ 
+            error: 'Fehler beim Abrufen der Geräte',
+            timestamp: new Date().toISOString()
+        });
     }
 });
 
+// Hilfsfunktion für sicheren Dateizugriff mit Sperre
+async function withFileLock(filePath, callback) {
+    const lockKey = filePath;
+    
+    // Warte bis die Sperre frei ist
+    while (fileLocks.has(lockKey)) {
+        await new Promise(resolve => setTimeout(resolve, 10));
+    }
+    
+    // Setze Sperre
+    fileLocks.set(lockKey, true);
+    
+    try {
+        return await callback();
+    } finally {
+        // Gib Sperre frei
+        fileLocks.delete(lockKey);
+    }
+}
+
+// Hilfsfunktion zum sicheren Lesen der devices.json
+async function readDevicesSafely() {
+    try {
+        const data = await fs.readFile(devicesFile, 'utf8');
+        const devices = JSON.parse(data);
+        
+        // Validiere dass es sich um ein Array handelt
+        if (!Array.isArray(devices)) {
+            console.warn('devices.json enthält kein Array - wird zurückgesetzt');
+            return [];
+        }
+        
+        return devices;
+    } catch (error) {
+        console.log('Konnte devices.json nicht lesen oder war ungültig, erstelle neue Liste.');
+        console.log('Fehlerdetails:', error.message);
+        return [];
+    }
+}
+
+// Hilfsfunktion zum sicheren Schreiben der devices.json
+async function writeDevicesSafely(devices) {
+    try {
+        // Validiere die Daten vor dem Schreiben
+        if (!Array.isArray(devices)) {
+            throw new Error('Daten ist kein Array');
+        }
+        
+        // Erstelle Backup vor dem Schreiben
+        const backupFile = devicesFile + '.backup';
+        try {
+            await fs.copyFile(devicesFile, backupFile);
+        } catch (error) {
+            // Backup ist optional
+        }
+        
+        // Schreibe die Daten atomar
+        const tempFile = devicesFile + '.tmp';
+        await fs.writeFile(tempFile, JSON.stringify(devices, null, 2));
+        await fs.rename(tempFile, devicesFile);
+        
+        console.log(`devices.json erfolgreich gespeichert (${devices.length} Geräte)`);
+        return true;
+    } catch (error) {
+        console.error('Kritischer Fehler beim Schreiben der devices.json:', error);
+        
+        // Versuche Backup wiederherzustellen
+        try {
+            const backupFile = devicesFile + '.backup';
+            const backupData = await fs.readFile(backupFile, 'utf8');
+            await fs.writeFile(devicesFile, backupData);
+            console.log('Backup wurde wiederhergestellt');
+        } catch (backupError) {
+            console.error('Backup-Wiederherstellung fehlgeschlagen:', backupError);
+        }
+        
+        return false;
+    }
+}
+
 // POST /api/devices - Fügt ein neues Gerät hinzu oder aktualisiert ein bestehendes
 app.post('/api/devices', async (req, res) => {
+    const startTime = Date.now();
+    
     try {
-        console.log('Empfangene Gerätedaten:', req.body);
+        console.log(`[${new Date().toISOString()}] POST /api/devices - Gerät empfangen:`, req.body?.hostname || 'Unbekannt');
+        
+        // Validiere die Anfragedaten
+        if (!req.body || typeof req.body !== 'object') {
+            return res.status(400).json({ error: 'Ungültige Anfragedaten' });
+        }
+        
         const newDevice = {
             ...req.body,
-            id: Date.now(),
-            timestamp: new Date().toISOString()
+            id: Date.now() + Math.random(), // Einzigartige ID mit Zufallsanteil
+            timestamp: new Date().toISOString(),
+            lastModified: new Date().toISOString(),
+            modifiedBy: 'script'
         };
 
-        let devices = [];
-        try {
-            const data = await fs.readFile(devicesFile, 'utf8');
-            devices = JSON.parse(data);
-        } catch (error) {
-            console.log('Konnte devices.json nicht lesen, erstelle eine neue Liste.');
-            devices = [];
-        }
+        const result = await withFileLock(devicesFile, async () => {
+            const devices = await readDevicesSafely();
+            
+            // Finde existierendes Gerät anhand von assetNumber oder hostname
+            const existingIndex = devices.findIndex(d => 
+                d.assetNumber === newDevice.assetNumber || 
+                (d.hostname === newDevice.hostname && d.assetNumber === newDevice.assetNumber)
+            );
 
-        const existingIndex = devices.findIndex(d => d.assetNumber === newDevice.assetNumber);
-
-        if (existingIndex > -1) {
-            const oldDevice = devices[existingIndex];
-            
-            // WICHTIG: Laufwerksdaten zusammenführen
-            const mergedDrives = {
-                localDrives: newDevice.drives?.localDrives || [],
-                otherDrives: newDevice.drives?.otherDrives || [],
-                networkDrives: newDevice.drives?.networkDrives || [] // Die neuen Netzlaufwerke vom Skript
-            };
-            
-            devices[existingIndex] = {
-                ...oldDevice, // Behalte alte Metadaten wie location, notes, status
-                ...newDevice, // Überschrebe mit allen neuen Daten
-                id: oldDevice.id,
-                drives: mergedDrives, // Setze die zusammengeführten Laufwerksdaten
-                lastModified: new Date().toISOString(),
-                modifiedBy: 'system'
-            };
-            
-            console.log(`Gerät aktualisiert: ${newDevice.assetNumber || newDevice.hostname}`);
-            console.log(`Netzlaufwerke gespeichert: ${mergedDrives.networkDrives.length}`);
-            res.status(200).json({ message: 'Gerät erfolgreich aktualisiert', device: devices[existingIndex] });
-        } else {
-            // Neues Gerät: Stelle sicher, dass die drives-Struktur existiert
-            if (!newDevice.drives) {
-                newDevice.drives = {
-                    localDrives: [],
-                    otherDrives: [],
-                    networkDrives: []
+            if (existingIndex > -1) {
+                const oldDevice = devices[existingIndex];
+                
+                // Laufwerksdaten zusammenführen
+                const mergedDrives = {
+                    localDrives: newDevice.drives?.localDrives || [],
+                    otherDrives: newDevice.drives?.otherDrives || [],
+                    networkDrives: newDevice.drives?.networkDrives || []
+                };
+                
+                // Behalte wichtige alte Metadaten
+                devices[existingIndex] = {
+                    ...oldDevice,
+                    ...newDevice,
+                    id: oldDevice.id, // Behalte die ursprüngliche ID
+                    drives: mergedDrives,
+                    lastModified: newDevice.timestamp,
+                    modifiedBy: newDevice.modifiedBy
+                };
+                
+                console.log(`✅ Gerät aktualisiert: ${newDevice.assetNumber || newDevice.hostname} (ID: ${oldDevice.id})`);
+                
+                return {
+                    success: await writeDevicesSafely(devices),
+                    device: devices[existingIndex],
+                    action: 'updated'
+                };
+            } else {
+                // Stelle sicher, dass die drives-Struktur für neue Geräte existiert
+                if (!newDevice.drives) {
+                    newDevice.drives = {
+                        localDrives: [],
+                        otherDrives: [],
+                        networkDrives: []
+                    };
+                }
+                
+                devices.push(newDevice);
+                console.log(`✅ Neues Gerät hinzugefügt: ${newDevice.assetNumber || newDevice.hostname} (ID: ${newDevice.id})`);
+                
+                return {
+                    success: await writeDevicesSafely(devices),
+                    device: newDevice,
+                    action: 'added'
                 };
             }
-            devices.push(newDevice);
-            console.log(`Neues Gerät hinzugefügt: ${newDevice.assetNumber || newDevice.hostname}`);
-            console.log(`Netzlaufwerke gespeichert: ${newDevice.drives.networkDrives.length}`);
-            res.status(201).json({ message: 'Gerät erfolgreich hinzugefügt', device: newDevice });
+        });
+
+        const duration = Date.now() - startTime;
+        
+        if (result.success) {
+            const message = result.action === 'updated' ? 'Gerät erfolgreich aktualisiert' : 'Gerät erfolgreich hinzugefügt';
+            console.log(`📊 POST-Abschluss in ${duration}ms: ${message}`);
+            
+            res.status(result.action === 'updated' ? 200 : 201)
+               .json({ 
+                   message, 
+                   device: result.device,
+                   timestamp: new Date().toISOString()
+               });
+        } else {
+            console.error(`❌ POST-Abschluss in ${duration}ms: Schreibfehler`);
+            res.status(500).json({ error: 'Fehler beim Speichern der Gerätedaten' });
         }
 
-        await fs.writeFile(devicesFile, JSON.stringify(devices, null, 2));
-        console.log('devices.json erfolgreich gespeichert.');
-
     } catch (error) {
-        console.error('Fehler beim Verarbeiten der Gerätedaten:', error);
-        res.status(500).json({ error: 'Serverfehler beim Speichern der Gerätedaten' });
+        const duration = Date.now() - startTime;
+        console.error(`❌ POST-Fehler in ${duration}ms:`, error);
+        res.status(500).json({ 
+            error: 'Serverfehler beim Verarbeiten der Gerätedaten',
+            timestamp: new Date().toISOString()
+        });
     }
 });
 
