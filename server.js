@@ -1,7 +1,7 @@
 const express = require('express');
 const https = require('https');
 const http = require('http');
-const fs = require('fs').promises;
+const fs = require('fs');
 const path = require('path');
 const os = require('os');
 
@@ -12,10 +12,18 @@ const PORT_HTTPS = 443; // Standard HTTPS Port (443 statt 2001)
 const clients = [];
 const DEBUG = process.env.DEBUG === 'true'; // Debug-Logging aktivieren mit DEBUG=true
 
-// Pfad zur devices.json Datei im öffentlichen Verzeichnis
-const devicesFile = path.join(__dirname, 'public', 'devices.json');
+// Pfad zur devices.json Datei im öffentlichen Verzeichnis (ABSOLUTER PFAD!)
+const __filename = process.argv[1];
+const __dirname = path.dirname(__filename);
+const devicesFile = path.resolve(__dirname, 'public', 'devices.json');
 
-// Backup-Funktion für devices.json
+console.log('📁 Working Directory:', process.cwd());
+console.log('📁 Server Directory:', __dirname);
+console.log('📁 Devices File:', devicesFile);
+console.log('🖥️  Platform:', process.platform);
+console.log('👤 User:', process.getuid ? `UID:${process.getuid()} GID:${process.getgid()}` : 'N/A');
+
+// Backup-Funktion für devices.json mit File-Locking
 async function backupDevicesFile() {
     try {
         const backupDir = path.join(__dirname, 'backups');
@@ -48,6 +56,82 @@ async function backupDevicesFile() {
         }
     } catch (error) {
         console.error('❌ Fehler beim Erstellen des Backups:', error);
+    }
+}
+
+// Sicheres Schreiben mit File-Locking für Linux/Ubuntu
+async function safeWriteFile(filepath, data) {
+    return new Promise((resolve, reject) => {
+        const tempFile = `${filepath}.tmp`;
+        
+        // 1. Schreibe in temporäre Datei
+        fs.writeFile(tempFile, data, { mode: 0o644 }, (writeErr) => {
+            if (writeErr) {
+                console.error('❌ Fehler beim Schreiben in temporäre Datei:', writeErr);
+                return reject(writeErr);
+            }
+            
+            // 2. Synchronisiere auf die Festplatte (wichtig für Linux!)
+            fs.open(tempFile, 'r', (openErr, fd) => {
+                if (openErr) {
+                    return reject(openErr);
+                }
+                
+                fs.fsync(fd, (syncErr) => {
+                    fs.close(fd, (closeErr) => {
+                        // Ignoriere fsync/close errors, der rename ist wichtiger
+                    });
+                    
+                    if (syncErr) {
+                        console.warn('⚠️  fsync Fehler:', syncErr.message);
+                    }
+                    
+                    // 3. Rename (atomisch auf den meisten Dateisystemen)
+                    fs.rename(tempFile, filepath, (renameErr) => {
+                        if (renameErr) {
+                            console.error('❌ Fehler beim Umbenennen der Datei:', renameErr);
+                            return reject(renameErr);
+                        }
+                        
+                        // 4. Optional: Nochmal fsync für das Verzeichnis
+                        try {
+                            const dirFd = fs.openSync(path.dirname(filepath), 'r');
+                            fs.fsyncSync(dirFd);
+                            fs.closeSync(dirFd);
+                        } catch (dirSyncErr) {
+                            // Verzeichnis-Sync ist optional
+                        }
+                        
+                        console.log(`✅ Datei sicher geschrieben: ${filepath}`);
+                        resolve();
+                    });
+                });
+            });
+        });
+    });
+}
+
+// Prüfe Datei-Berechtigungen auf Linux
+function checkFilePermissions() {
+    try {
+        if (process.platform !== 'win32') {
+            const stats = fs.statSync(devicesFile);
+            const mode = stats.mode;
+            
+            console.log(`📋 Dateiberechtigungen: ${mode.toString(8)}`);
+            console.log(`👤 Owner UID: ${stats.uid}`);
+            console.log(`👥 Group GID: ${stats.gid}`);
+            
+            // Prüfe ob die Datei beschreibbar ist
+            fs.accessSync(devicesFile, fs.constants.W_OK);
+            console.log('✅ Datei ist beschreibbar');
+        }
+    } catch (error) {
+        console.error('❌ Berechtigungsproblem:', error.message);
+        if (error.code === 'EACCES') {
+            console.error('❌ Keine Schreibberechtigung! Führe den Server mit Schreibrechten aus.');
+            console.error('💡 Lösung: chmod 666 public/devices.json');
+        }
     }
 }
 
@@ -129,13 +213,22 @@ async function checkSSLCertificates() {
 // GET /api/devices - Ruft alle Geräte ab
 app.get('/api/devices', async (req, res) => {
     try {
-        const data = await fs.readFile(devicesFile, 'utf8');
+        const data = await fs.promises.readFile(devicesFile, 'utf8');
         const devices = JSON.parse(data);
         console.log(`📊 GET /api/devices - ${devices.length} Geräte geladen`);
         res.json(devices);
     } catch (error) {
-        console.error('Fehler beim Lesen von devices.json:', error);
-        res.json([]);
+        console.error('❌ Fehler beim Lesen von devices.json:', error);
+        
+        if (error.code === 'ENOENT') {
+            console.log('📄 devices.json existiert nicht, gibt leere Liste zurück');
+            res.json([]);
+        } else if (error.code === 'EACCES') {
+            console.error('❌ Keine Leserechte auf devices.json!');
+            res.status(500).json({ error: 'Keine Berechtigung zum Lesen der Geräte-Daten' });
+        } else {
+            res.json([]);
+        }
     }
 });
 
@@ -189,11 +282,17 @@ app.post('/api/devices', async (req, res) => {
 
         let devices = [];
         try {
-            const data = await fs.readFile(devicesFile, 'utf8');
+            const data = await fs.promises.readFile(devicesFile, 'utf8');
             devices = JSON.parse(data);
+            console.log(`📖 ${devices.length} existierende Geräte geladen`);
         } catch (error) {
-            console.log('Konnte devices.json nicht lesen, erstelle eine neue Liste.');
-            devices = [];
+            if (error.code === 'ENOENT') {
+                console.log('📄 devices.json existiert nicht, erstelle neue Liste.');
+                devices = [];
+            } else {
+                console.error('❌ Fehler beim Lesen von devices.json:', error);
+                return res.status(500).json({ error: 'Fehler beim Laden der Geräte-Daten' });
+            }
         }
 
         const existingIndex = devices.findIndex(d => d.assetNumber === newDevice.assetNumber);
@@ -238,8 +337,8 @@ app.post('/api/devices', async (req, res) => {
             // Backup vor dem Speichern erstellen
             await backupDevicesFile();
             
-            // Speichern
-            await fs.writeFile(devicesFile, JSON.stringify(devices, null, 2));
+            // Speichern mit atomarem Write für Linux
+            await safeWriteFile(devicesFile, JSON.stringify(devices, null, 2));
             console.log('✅ devices.json erfolgreich aktualisiert.');
             
             res.status(200).json({ message: 'Gerät erfolgreich aktualisiert', device: devices[existingIndex] });
@@ -264,8 +363,8 @@ app.post('/api/devices', async (req, res) => {
             // Backup vor dem Speichern erstellen
             await backupDevicesFile();
             
-            // Speichern
-            await fs.writeFile(devicesFile, JSON.stringify(devices, null, 2));
+            // Speichern mit atomarem Write für Linux
+            await safeWriteFile(devicesFile, JSON.stringify(devices, null, 2));
             console.log('✅ devices.json erfolgreich gespeichert.');
             
             res.status(201).json({ message: 'Gerät erfolgreich hinzugefügt', device: newDevice });
@@ -283,7 +382,7 @@ app.put('/api/devices/:assetNumber', async (req, res) => {
         const assetNumber = req.params.assetNumber;
         console.log(`📝 PUT /api/devices/${assetNumber}`);
         
-        let devices = JSON.parse(await fs.readFile(devicesFile, 'utf8'));
+        let devices = JSON.parse(await fs.promises.readFile(devicesFile, 'utf8'));
         
         const deviceIndex = devices.findIndex(d => d.assetNumber === assetNumber);
         
@@ -302,7 +401,8 @@ app.put('/api/devices/:assetNumber', async (req, res) => {
         // Backup vor dem Speichern
         await backupDevicesFile();
         
-        await fs.writeFile(devicesFile, JSON.stringify(devices, null, 2));
+        // Speichern mit atomarem Write für Linux
+        await safeWriteFile(devicesFile, JSON.stringify(devices, null, 2));
         console.log(`✅ Gerät aktualisiert (PUT): ${assetNumber}`);
         
         res.status(200).json({ message: 'Gerät erfolgreich aktualisiert', device: devices[deviceIndex] });
@@ -318,7 +418,7 @@ app.delete('/api/devices/:assetNumber', async (req, res) => {
         const assetNumber = req.params.assetNumber;
         console.log(`🗑️  DELETE /api/devices/${assetNumber}`);
         
-        let devices = JSON.parse(await fs.readFile(devicesFile, 'utf8'));
+        let devices = JSON.parse(await fs.promises.readFile(devicesFile, 'utf8'));
         const initialLength = devices.length;
 
         devices = devices.filter(device => device.assetNumber !== assetNumber);
@@ -327,7 +427,8 @@ app.delete('/api/devices/:assetNumber', async (req, res) => {
             // Backup vor dem Speichern
             await backupDevicesFile();
             
-            await fs.writeFile(devicesFile, JSON.stringify(devices, null, 2));
+            // Speichern mit atomarem Write für Linux
+            await safeWriteFile(devicesFile, JSON.stringify(devices, null, 2));
             console.log(`✅ Gerät gelöscht: ${assetNumber}`);
             res.status(200).json({ message: 'Gerät erfolgreich gelöscht' });
         } else {
@@ -357,6 +458,112 @@ app.get('/api/server-info', (req, res) => {
     });
 });
 
+// Diagnose-Endpunkt
+app.get('/api/diagnose', async (req, res) => {
+    const diagnosis = {
+        timestamp: new Date().toISOString(),
+        platform: process.platform,
+        nodeVersion: process.version,
+        workingDirectory: process.cwd(),
+        serverDirectory: __dirname,
+        devicesFile: devicesFile,
+        fileSystem: {}
+    };
+    
+    // Prüfe devices.json
+    try {
+        const stats = await fs.promises.stat(devicesFile);
+        diagnosis.fileSystem.devicesFile = {
+            exists: true,
+            size: stats.size,
+            mode: stats.mode.toString(8),
+            uid: stats.uid,
+            gid: stats.gid,
+            canRead: true,
+            canWrite: true
+        };
+        
+        // Prüfe Leserechte
+        try {
+            await fs.promises.access(devicesFile, fs.constants.R_OK);
+            diagnosis.fileSystem.devicesFile.canRead = true;
+        } catch (e) {
+            diagnosis.fileSystem.devicesFile.canRead = false;
+            diagnosis.fileSystem.devicesFile.readError = e.message;
+        }
+        
+        // Prüfe Schreibrechte
+        try {
+            await fs.promises.access(devicesFile, fs.constants.W_OK);
+            diagnosis.fileSystem.devicesFile.canWrite = true;
+        } catch (e) {
+            diagnosis.fileSystem.devicesFile.canWrite = false;
+            diagnosis.fileSystem.devicesFile.writeError = e.message;
+        }
+        
+        // Prüfe JSON-Validität
+        try {
+            const data = await fs.promises.readFile(devicesFile, 'utf8');
+            const devices = JSON.parse(data);
+            diagnosis.fileSystem.devicesFile.validJson = true;
+            diagnosis.fileSystem.devicesFile.deviceCount = devices.length;
+        } catch (e) {
+            diagnosis.fileSystem.devicesFile.validJson = false;
+            diagnosis.fileSystem.devicesFile.jsonError = e.message;
+        }
+        
+    } catch (e) {
+        diagnosis.fileSystem.devicesFile = {
+            exists: false,
+            error: e.message
+        };
+    }
+    
+    // Prüfe Backup-Verzeichnis
+    try {
+        const backupDir = path.join(__dirname, 'backups');
+        const stats = await fs.promises.stat(backupDir);
+        const files = await fs.promises.readdir(backupDir);
+        const backupFiles = files.filter(f => f.startsWith('devices-backup-') && f.endsWith('.json'));
+        
+        diagnosis.fileSystem.backups = {
+            exists: true,
+            mode: stats.mode.toString(8),
+            backupCount: backupFiles.length
+        };
+    } catch (e) {
+        diagnosis.fileSystem.backups = {
+            exists: false,
+            error: e.message
+        };
+    }
+    
+    res.json(diagnosis);
+});
+
+// Reparatur-Endpunkt
+app.post('/api/repair', async (req, res) => {
+    if (process.platform === 'win32') {
+        return res.status(400).json({ 
+            error: 'Diese Funktion ist nur für Linux/Ubuntu verfügbar',
+            message: 'Auf Windows sind keine Berechtigungs-Reparaturen nötig'
+        });
+    }
+    
+    try {
+        await repairFilePermissions();
+        res.json({ 
+            success: true,
+            message: 'Berechtigungen erfolgreich repariert'
+        });
+    } catch (error) {
+        res.status(500).json({ 
+            error: 'Reparatur fehlgeschlagen', 
+            message: error.message 
+        });
+    }
+});
+
 // Hilfsfunktion zum Finden aller lokalen IPv4-Adressen
 function getAllLocalIps() {
     const interfaces = os.networkInterfaces();
@@ -371,20 +578,60 @@ function getAllLocalIps() {
     return ips;
 }
 
+// Funktion zum Reparieren der Dateiberechtigungen (nur Linux)
+async function repairFilePermissions() {
+    if (process.platform === 'win32') {
+        console.log('ℹ️  Windows erkannt, kein Berechtigungs-Check nötig');
+        return;
+    }
+    
+    try {
+        console.log('🔧 Prüfe und repariere Dateiberechtigungen...');
+        
+        // Stelle sicher, dass das public Verzeichnis die richtigen Berechtigungen hat
+        const publicDir = path.join(__dirname, 'public');
+        await fs.promises.chmod(publicDir, 0o755);
+        console.log('✅ public/ Verzeichnis: 755');
+        
+        // Prüfe ob devices.json existiert
+        try {
+            await fs.promises.access(devicesFile);
+            // Setze Berechtigungen auf 666 (rw-rw-rw-)
+            await fs.promises.chmod(devicesFile, 0o666);
+            console.log('✅ devices.json: 666');
+        } catch (error) {
+            console.log('📄 devices.json existiert noch nicht, wird bei Bedarf erstellt');
+        }
+        
+        // Backup-Verzeichnis
+        const backupDir = path.join(__dirname, 'backups');
+        await fs.promises.chmod(backupDir, 0o755);
+        console.log('✅ backups/ Verzeichnis: 755');
+        
+        console.log('✅ Berechtigungen erfolgreich repariert');
+    } catch (error) {
+        console.error('❌ Fehler beim Reparieren der Berechtigungen:', error);
+        console.error('💡 Versuche: sudo chmod -R 755 public && sudo chmod 666 public/devices.json');
+    }
+}
+
 // Funktion zur Initialisierung der devices.json-Datei
 async function initializeDevicesFile() {
     try {
-        await fs.access(devicesFile);
+        await fs.promises.access(devicesFile);
         console.log('✅ devices.json gefunden.');
         
         // Prüfe ob die Datei gültiges JSON enthält
-        const data = await fs.readFile(devicesFile, 'utf8');
+        const data = await fs.promises.readFile(devicesFile, 'utf8');
         JSON.parse(data);
         console.log('✅ devices.json enthält gültiges JSON.');
+        
+        // Prüfe Berechtigungen auf Linux
+        checkFilePermissions();
     } catch (error) {
         if (error.code === 'ENOENT') {
             console.log('📄 devices.json nicht gefunden. Erstelle neue Datei...');
-            await fs.writeFile(devicesFile, JSON.stringify([], null, 2));
+            await safeWriteFile(devicesFile, JSON.stringify([], null, 2));
             console.log('✅ devices.json erfolgreich erstellt.');
         } else {
             console.error('❌ devices.json ist beschädigt oder enthält ungültiges JSON:', error.message);
@@ -392,7 +639,7 @@ async function initializeDevicesFile() {
             // Versuche Backup wiederherzustellen
             const backupDir = path.join(__dirname, 'backups');
             try {
-                const files = await fs.readdir(backupDir);
+                const files = await fs.promises.readdir(backupDir);
                 const backupFiles = files
                     .filter(f => f.startsWith('devices-backup-') && f.endsWith('.json'))
                     .map(f => ({ name: f, path: path.join(backupDir, f) }))
@@ -400,23 +647,23 @@ async function initializeDevicesFile() {
                 
                 if (backupFiles.length > 0) {
                     console.log(`🔄 Versuche Backup wiederherzustellen: ${backupFiles[0].name}`);
-                    await fs.copyFile(backupFiles[0].path, devicesFile);
+                    await fs.promises.copyFile(backupFiles[0].path, devicesFile);
                     console.log('✅ Backup erfolgreich wiederhergestellt!');
                 } else {
                     console.log('⚠️  Kein Backup gefunden. Erstelle neue leere Datei...');
-                    await fs.writeFile(devicesFile, JSON.stringify([], null, 2));
+                    await safeWriteFile(devicesFile, JSON.stringify([], null, 2));
                 }
             } catch (backupError) {
                 console.error('❌ Konnte Backup nicht wiederherstellen:', backupError.message);
                 console.log('📄 Erstelle neue leere devices.json...');
-                await fs.writeFile(devicesFile, JSON.stringify([], null, 2));
+                await safeWriteFile(devicesFile, JSON.stringify([], null, 2));
             }
         }
     }
     
     // Backup-Verzeichnis erstellen
     const backupDir = path.join(__dirname, 'backups');
-    await fs.mkdir(backupDir, { recursive: true });
+    await fs.promises.mkdir(backupDir, { recursive: true });
     console.log('✅ Backup-Verzeichnis vorhanden.');
 }
 
@@ -425,6 +672,12 @@ async function initializeDevicesFile() {
 async function startServer() {
     await checkSSLCertificates();
     await initializeDevicesFile();
+    
+    // Auf Linux: Prüfe und repariere Berechtigungen
+    if (process.platform !== 'win32') {
+        console.log('🔧 Linux/Ubuntu erkannt - prüfe Berechtigungen...');
+        await repairFilePermissions();
+    }
     
     const localIps = getAllLocalIps();
     
