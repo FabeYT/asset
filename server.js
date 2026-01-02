@@ -201,8 +201,8 @@ async function migrateFromJson() {
                 device.location || null,
                 device.notes || null,
                 device.status || 'in Betrieb',
-                device.timestamp || null,
-                device.lastModified || null,
+                toMySQLDateTime(device.timestamp) || null,
+                toMySQLDateTime(device.lastModified) || null,
                 device.modifiedBy || 'system'
             ]);
         }
@@ -280,9 +280,9 @@ app.get('/api/devices', async (req, res) => {
         const [rows] = await dbPool.execute('SELECT * FROM devices ORDER BY timestamp DESC');
         const devices = rows.map(device => ({
             ...device,
-            gpu: device.gpu ? JSON.parse(device.gpu) : [],
-            network: device.network ? JSON.parse(device.network) : {},
-            drives: device.drives ? JSON.parse(device.drives) : { localDrives: [], otherDrives: [], networkDrives: [] }
+            gpu: typeof device.gpu === 'string' ? JSON.parse(device.gpu) : (device.gpu || []),
+            network: typeof device.network === 'string' ? JSON.parse(device.network) : (device.network || {}),
+            drives: typeof device.drives === 'string' ? JSON.parse(device.drives) : (device.drives || { localDrives: [], otherDrives: [], networkDrives: [] })
         }));
         res.json(devices);
     } catch (error) {
@@ -485,7 +485,7 @@ app.put('/api/devices/:assetNumber', async (req, res) => {
             updateData.location !== undefined ? updateData.location : existingDevice.location,
             updateData.notes !== undefined ? updateData.notes : existingDevice.notes,
             updateData.status !== undefined ? updateData.status : existingDevice.status,
-            new Date().toISOString(),
+            toMySQLDateTime(new Date()),
             'system',
             assetNumber
         ]);
