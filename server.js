@@ -59,6 +59,18 @@ async function createDbConnection() {
     }
 }
 
+// Hilfsfunktion: Konvertiert ISO-Strings zu MySQL DATETIME Format
+function toMySQLDateTime(isoString) {
+    if (!isoString) return null;
+    try {
+        const date = new Date(isoString);
+        if (isNaN(date.getTime())) return null;
+        return date.toISOString().slice(0, 19).replace('T', ' ');
+    } catch {
+        return null;
+    }
+}
+
 // Funktion zum Erstellen der devices Tabelle
 async function createDevicesTable() {
     try {
@@ -349,7 +361,7 @@ app.post('/api/devices', async (req, res) => {
                 oldDevice.location || null,
                 oldDevice.notes || null,
                 oldDevice.status || 'in Betrieb',
-                new Date().toISOString(),
+                toMySQLDateTime(new Date()),
                 'system',
                 newDevice.assetNumber
             ]);
@@ -397,8 +409,8 @@ app.post('/api/devices', async (req, res) => {
                 newDevice.location || null,
                 newDevice.notes || null,
                 newDevice.status || 'in Betrieb',
-                newDevice.timestamp,
-                new Date().toISOString(),
+                toMySQLDateTime(newDevice.timestamp),
+                toMySQLDateTime(new Date()),
                 'system'
             ]);
             
