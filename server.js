@@ -132,8 +132,10 @@ async function withFileLock(filePath, callback) {
     }
 }
 
-// Hilfsfunktion zum sicheren Lesen der devices.json - NIEMALS Geräte löschen!
+// Hilfsfunktion zum sicheren Lesen der devices.json - DATENSCHUTZ AKTIVIERT
 async function readDevicesSafely() {
+    console.log('🛡️ DATENSCHUTZ: Lese Geräte aus geschützter Datei...');
+    
     // ZUERST: Versuche aus der Hauptdatei zu lesen
     try {
         const data = await fs.readFile(devicesFile, 'utf8');
@@ -144,6 +146,12 @@ async function readDevicesSafely() {
             console.error('❌ KRITISCH: devices.json enthält kein Array! Versuche Wiederherstellung...');
             return await restoreFromBackup();
         }
+        
+        // ZÄHLE GERÄTE und logge sie
+        console.log(`✅ Sicher geladen: ${devices.length} Geräte`);
+        devices.forEach((device, index) => {
+            console.log(`  ${index + 1}. ${device.assetNumber} - ${device.hostname} (${device.user || 'Unbekannt'})`);
+        });
         
         return devices;
     } catch (error) {
@@ -190,8 +198,10 @@ async function restoreFromBackup() {
     }
 }
 
-// Hilfsfunktion zum sicheren Schreiben der devices.json - MIT SCHUTZ!
+// Hilfsfunktion zum sicheren Schreiben der devices.json - DATENSCHUTZ MODUS
 async function writeDevicesSafely(devices) {
+    console.log('🛡️ DATENSCHUTZ: Versuche Geräte zu speichern...');
+    
     try {
         // KRITISCHE VALIDIERUNG
         if (!Array.isArray(devices)) {
@@ -200,20 +210,32 @@ async function writeDevicesSafely(devices) {
         
         // ZÄHLE GERÄTE VOR DEM SCHREIBEN
         const deviceCount = devices.length;
-        console.log(`📝 Schreibe ${deviceCount} Geräte in devices.json...`);
+        console.log(`📝 VERSUCH: Schreibe ${deviceCount} Geräte in devices.json...`);
         
-        // SCHUTZ: Verhindere versehentliches Löschen aller Geräte
+        // ABSOLUTER SCHUTZ: Verhindere JEDES Löschen von Geräten
         if (deviceCount === 0) {
-            console.warn('⚠️  VERSUCH LEERE GERÄTELISTE ZU SCHREIBEN! Das wird BLOCKIERT!');
-            console.log('🔄 Versuche stattdessen Backup wiederherzustellen...');
+            console.error('🚨 ABSOLUTER DATENSCHUTZ: Versuch LEERE GERÄTELISTE zu schreiben! GEBLOCKIERT!');
+            console.log('🔄 Lade Backup wiederherstellung...');
             return await restoreFromBackup();
+        }
+        
+        // ZUSÄTZLICHER SCHUTZ: Prüfe ob plötzlich viel weniger Geräte als erwartet
+        try {
+            const currentData = await fs.readFile(devicesFile, 'utf8');
+            const currentDevices = JSON.parse(currentData);
+            if (Array.isArray(currentDevices) && currentDevices.length > deviceCount * 2) {
+                console.error(`🚨 DATENSCHUTZ: Unerwarteter Geräteverlust von ${currentDevices.length} auf ${deviceCount}! GEBLOCKIERT!`);
+                return false;
+            }
+        } catch (e) {
+            // Ignoriere Lesefehler beim Schutz-Check
         }
         
         // Erstelle Backup vor dem Schreiben
         const backupFile = devicesFile + '.backup';
         try {
             await fs.copyFile(devicesFile, backupFile);
-            console.log('💾 Backup erstellt');
+            console.log('💾 Backup erfolgreich erstellt');
         } catch (error) {
             console.warn('⚠️  Backup-Erstellung fehlgeschlagen:', error.message);
         }
@@ -401,77 +423,23 @@ app.put('/api/devices/:assetNumber', async (req, res) => {
     }
 });
 
-// DELETE /api/devices/:assetNumber - LÖSCHT NUR MIT EXPLIZITER BESTÄTIGUNG!
+// DELETE /api/devices/:assetNumber - DATENSCHUTZ MODUS - DEAKTIVIERT!
 app.delete('/api/devices/:assetNumber', async (req, res) => {
     const assetNumber = req.params.assetNumber;
     
-    console.log(`🔥 DELETE-ANFRAGE für Gerät: ${assetNumber}`);
-    console.log(`⚠️  WARNUNG: Dies wird das Gerät ${assetNumber} PERMANENT löschen!`);
+    console.log('🚨 DATENSCHUTZ MODUS AKTIV');
+    console.log(`🛡️ DELETE-ANFRAGE für Gerät ${assetNumber} wurde BLOCKIERT!`);
+    console.log('⚠️  LÖSCHFUNKTION IST ZUM SCHUTZ DER DATEN DEAKTIVIERT!');
     
-    try {
-        const result = await withFileLock(devicesFile, async () => {
-            const devices = await readDevicesSafely();
-            const initialLength = devices.length;
-            
-            const devicesToDelete = devices.filter(d => d.assetNumber === assetNumber);
-            
-            if (devicesToDelete.length === 0) {
-                console.log(`❌ Gerät nicht gefunden: ${assetNumber}`);
-                return { success: false, error: 'Gerät nicht gefunden' };
-            }
-            
-            // SICHERHEIT: Bestätige dass wirklich gelöscht werden soll
-            console.log(`🎯 ZIEL: ${devicesToDelete.length} Gerät(e) mit Asset-Nummer ${assetNumber}`);
-            
-            const remainingDevices = devices.filter(device => device.assetNumber !== assetNumber);
-            
-            if (remainingDevices.length < initialLength) {
-                const deletedCount = initialLength - remainingDevices.length;
-                
-                const writeSuccess = await writeDevicesSafely(remainingDevices);
-                
-                if (writeSuccess) {
-                    console.log(`✅ ERFOLG: ${deletedCount} Gerät(e) mit Asset-Nummer ${assetNumber} gelöscht`);
-                    console.log(`📊 Verbleibend: ${remainingDevices.length} Geräte`);
-                    
-                    return { 
-                        success: true, 
-                        deletedCount,
-                        remainingDevices: remainingDevices.length,
-                        message: `${deletedCount} Gerät(e) erfolgreich gelöscht`
-                    };
-                } else {
-                    console.error('❌ FEHLER: Konnte Löschung nicht speichern! Daten bleiben erhalten.');
-                    return { success: false, error: 'Speicherfehler - Löschung abgebrochen' };
-                }
-            }
-            
-            return { success: false, error: 'Keine Geräte zum Löschen gefunden' };
-        });
-        
-        if (result.success) {
-            res.status(200).json({ 
-                message: result.message,
-                deletedCount: result.deletedCount,
-                remainingDevices: result.remainingDevices,
-                timestamp: new Date().toISOString()
-            });
-        } else {
-            const statusCode = result.error.includes('nicht gefunden') ? 404 : 500;
-            res.status(statusCode).json({ 
-                error: result.error,
-                timestamp: new Date().toISOString()
-            });
-        }
-        
-    } catch (error) {
-        console.error('❌ KRITISCHER FEHLER beim Löschen:', error);
-        res.status(500).json({ 
-            error: 'Serverfehler beim Löschen des Geräts',
-            details: error.message,
-            timestamp: new Date().toISOString()
-        });
-    }
+    // Immer ablehnen mit klarem Hinweis
+    res.status(403).json({ 
+        error: 'DATENSCHUTZ MODUS AKTIV',
+        message: 'Löschfunktion wurde zum Schutz der Daten deaktiviert',
+        details: 'Geräte können nur durch direkten Server-Zugriff gelöscht werden',
+        timestamp: new Date().toISOString()
+    });
+    
+    return;
 });
 
 // GET / - Liefert die Haupt-HTML-Datei

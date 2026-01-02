@@ -4560,151 +4560,44 @@ document.addEventListener('DOMContentLoaded', function() {
 
     // --- DATENLADEN-FUNKTIONEN ---
 
-    async function loadDeviceData() {
-        try {
-            // Versuche, die Daten von der API zu laden
-            const response = await fetch('api/devices');
-            if (!response.ok) {
-                throw new Error('Netzwerkantwort war nicht ok');
-            }
-            let deviceData = await response.json();
-
-            // Stelle sicher, dass die Netzwerkdaten korrekt formatiert sind
-            window.deviceData = deviceData.map(device => {
-                if (!device.network) device.network = [];
-                else if (!Array.isArray(device.network) && device.network.IPAddress) {
-                    device.network = [device.network];
-                }
-                return device;
-            });
-
-            // Speichere die Daten im localStorage für Offline-Zugriff
-            localStorage.setItem('deviceData', JSON.stringify(window.deviceData));
-
-            return window.deviceData;
-        } catch (error) {
-            console.error('Fehler beim Laden der Gerätedaten:', error);
-
-            // Versuche, die Daten aus dem localStorage zu laden
+async function loadDeviceData() {
+        // 🛡️ DATENSCHUTZ MODUS - NICHT MEHR AUTOMATISCH NEU LADEN
+        console.warn('🛡️ DATENSCHUTZ: Automatisches Datenladen deaktiviert');
+        
+        // Nur wenn keine lokalen Daten vorhanden sind, lade einmalig vom Server
+        if (!window.deviceData || window.deviceData.length === 0) {
+            console.log('📥 Lade initiale Daten vom Server...');
             try {
-                const cachedData = localStorage.getItem('deviceData');
-                if (cachedData) {
-                    window.deviceData = JSON.parse(cachedData);
-                    showNotification('Info', 'Verwende zwischengespeicherte Gerätedaten', 'info');
-                    return window.deviceData;
+                const response = await fetch('api/devices');
+                if (!response.ok) {
+                    throw new Error('Netzwerkantwort war nicht ok');
                 }
-            } catch (cacheError) {
-                console.error('Fehler beim Laden aus dem Cache:', cacheError);
+                let deviceData = await response.json();
+
+                // Stelle sicher, dass die Netzwerkdaten korrekt formatiert sind
+                window.deviceData = deviceData.map(device => {
+                    if (!device.network) device.network = [];
+                    else if (!Array.isArray(device.network) && device.network.IPAddress) {
+                        device.network = [device.network];
+                    }
+                    return device;
+                });
+
+                // Speichere die Daten im localStorage für Offline-Zugriff
+                localStorage.setItem('deviceData', JSON.stringify(window.deviceData));
+                console.log(`✅ Initiale Daten geladen: ${window.deviceData.length} Geräte`);
+
+                return window.deviceData;
+            } catch (error) {
+                console.error('❌ Fehler beim initialen Laden:', error);
+                window.deviceData = [];
+                return [];
             }
-
-            // Fallback auf Beispieldaten, wenn nichts anderes funktioniert
-            showNotification('Warnung', 'Verwende Beispieldaten, da keine Gerätedaten geladen werden konnten', 'warning');
-
-            window.deviceData = [
-                {
-                    assetNumber: "T86W51KP",
-                    hostname: "Beispiel-Laptop-01",
-                    deviceType: "Laptop",
-                    serialNumber: "SN123456789",
-                    manufacturer: "Dell",
-                    model: "Latitude 7420",
-                    status: "in Betrieb",
-                    location: "Büro 101",
-                    user: "Max Mustermann",
-                    purchaseDate: "2022-01-15",
-                    warrantyExpiry: "2025-01-15",
-                    cpu: "Intel Core i7-1185G7",
-                    ramGB: 16,
-                    cores: 4,
-                    logicalProc: 8,
-                    os: "Windows 11",
-                    storage: [
-                        { type: "SSD", size: 512, interface: "NVMe" }
-                    ],
-                    network: [
-                        {
-                            IPAddress: "192.168.1.100",
-                            MACAddress: "00:11:22:33:44:55",
-                            IPSubnet: "255.255.255.0"
-                        },
-                        {
-                            IPAddress: "192.168.1.101",
-                            MACAddress: "00:11:22:33:44:56",
-                            IPSubnet: "255.255.255.0"
-                        }
-                    ],
-                    notes: "Standard-Laptop für Entwickler",
-                    timestamp: new Date().toISOString(),
-                    lastModified: new Date().toISOString(),
-                    modifiedBy: "admin"
-                },
-                {
-                    assetNumber: "T86W52KP",
-                    hostname: "Beispiel-Server-01",
-                    deviceType: "Server",
-                    serialNumber: "SN987654321",
-                    manufacturer: "HP",
-                    model: "ProLiant DL380",
-                    status: "in Betrieb",
-                    location: "Serverraum A",
-                    user: "IT-Admin",
-                    purchaseDate: "2021-06-20",
-                    warrantyExpiry: "2024-06-20",
-                    cpu: "Intel Xeon Silver 4210",
-                    ramGB: 64,
-                    cores: 10,
-                    logicalProc: 20,
-                    os: "Windows Server 2019",
-                    rack: "A",
-                    slot: "5",
-                    operationClass: "Produktion",
-                    itResponsible: "IT-Admin",
-                    network: [
-                        {
-                            IPAddress: "10.10.16.10",
-                            MACAddress: "AA:BB:CC:DD:EE:FF",
-                            IPSubnet: "255.255.255.0"
-                        }
-                    ],
-                    notes: "Datenbankserver",
-                    timestamp: new Date().toISOString(),
-                    lastModified: new Date().toISOString(),
-                    modifiedBy: "admin"
-                },
-                {
-                    assetNumber: "T86W53KP",
-                    hostname: "Beispiel-PC-02",
-                    deviceType: "PC",
-                    serialNumber: "SN555666777",
-                    manufacturer: "Lenovo",
-                    model: "ThinkCentre M70q",
-                    status: "in Betrieb",
-                    location: "Büro 205",
-                    user: "Erika Musterfrau",
-                    purchaseDate: "2023-03-10",
-                    warrantyExpiry: "2026-03-10",
-                    cpu: "AMD Ryzen 5 5600G",
-                    ramGB: 32,
-                    cores: 6,
-                    logicalProc: 12,
-                    os: "Windows 11",
-                    network: [
-                        {
-                            IPAddress: "192.168.1.102",
-                            MACAddress: "10:20:30:40:50:60",
-                            IPSubnet: "255.255.255.0"
-                        }
-                    ],
-                    notes: "Arbeitsplatz im Vertrieb",
-                    timestamp: new Date().toISOString(),
-                    lastModified: new Date().toISOString(),
-                    modifiedBy: "admin"
-                }
-            ];
-
+        } else {
+            console.log(`📋 Verwende vorhandene lokale Daten: ${window.deviceData.length} Geräte`);
             return window.deviceData;
         }
-    }
+}
 
     // --- KERNFUNKTIONEN (Daten, UI, etc.) ---
 
@@ -5324,7 +5217,11 @@ document.addEventListener('DOMContentLoaded', function() {
             document.getElementById('device-modal').classList.remove('active');
             showEditDeviceModal(currentDevice);
         };
-        document.getElementById('delete-device-btn').onclick = deleteDeviceWithPassword;
+        // DELETE-FUNKTION DEAKTIVIERT - GERÄTE SOLLEN NICHT AUTOMATISCH GELÖSCHT WERDEN
+        // document.getElementById('delete-device-btn').onclick = deleteDeviceWithPassword;
+        document.getElementById('delete-device-btn').onclick = function() {
+            alert('🛡️ LÖSCHFUNKTION DEAKTIVIERT\n\nGeräte werden aus Sicherheitsgründen nicht mehr automatisch gelöscht.\nBitte verwenden Sie die manuelle API falls nötig.');
+        };
 
         document.getElementById('device-modal').classList.add('active');
     }
@@ -7478,37 +7375,10 @@ function downloadDevicePDF() {
     showNotification('Erfolg', 'PDF wurde erfolgreich erstellt', 'success');
 }
 
+// LÖSCHFUNKTION KOMPLETT DEAKTIVIERT - DATENSCHUTZ AKTIVIERT
     function deleteDeviceWithPassword() {
-        if (!currentDevice) return;
-        const password = prompt('Bitte geben Sie das Lösch-Passwort ein:');
-        if (password === 'ETKN2025!') {
-            fetch(`/api/devices/${currentDevice.assetNumber}`, {
-                method: 'DELETE'
-            })
-            .then(response => {
-                if (!response.ok) {
-                    throw new Error('Fehler beim Löschen des Geräts');
-                }
-                return response.json();
-            })
-            .then(result => {
-                showNotification('Erfolg', result.message, 'success');
-                addConsoleMessage(`Gerät ${currentDevice.assetNumber} wurde gelöscht`, 'success');
-                document.getElementById('device-modal').classList.remove('active');
-                // Daten neu laden und UI aktualisieren
-                loadDeviceData().then(() => {
-                    if (document.getElementById('devices').classList.contains('active')) {
-                        updateDevicesTable(window.deviceData);
-                    }
-                });
-            })
-            .catch(error => {
-                console.error('Fehler:', error);
-                showNotification('Fehler', 'Gerät konnte nicht gelöscht werden', 'error');
-            });
-        } else if (password !== null) {
-            showNotification('Fehler', 'Falsches Passwort', 'error');
-        }
+        alert('🛡️ DATENSCHUTZ MODUS AKTIV\n\nDiese Funktion wurde deaktiviert, um unbeabsichtigtes Löschen von Geräten zu verhindern.\n\nGeräte können nur noch über direkte API-Aufrufe gelöscht werden.');
+        return false;
     }
 
     function clearConsole() {
