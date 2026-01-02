@@ -4749,30 +4749,29 @@ document.addEventListener('DOMContentLoaded', function() {
     }
 
     function detectIPPools(deviceData) {
-        const pools = {};
-        
+        const predefinedIPPools = {
+            '10.10.16': { network: '10.10.16.0', subnet: '255.255.255.0', range: 254, usedIPs: 0, devices: [] }
+        };
+        const pools = { ...predefinedIPPools };
+
         // Erstelle eine globale Menge für alle einzigartigen IP-Adressen
         const allUniqueIPs = new Set();
-        
+
         deviceData.forEach(device => {
             if (device.network && Array.isArray(device.network)) {
                 device.network.forEach(net => {
                     if (net.IPAddress) {
                         allUniqueIPs.add(net.IPAddress);
-                        
+
                         const match = net.IPAddress.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
                         if (match) {
                             const network = `${match[1]}.${match[2]}.${match[3]}`;
+
+                            // NUR vordefinierte Pools verwenden, KEINE neuen Pools erstellen
                             if (!pools[network]) {
-                                pools[network] = {
-                                    network: network + '.0',
-                                    subnet: net.IPSubnet || '255.255.255.0',
-                                    range: 254, // Annahme: /24 Netzwerk
-                                    usedIPs: 0,
-                                    devices: []
-                                };
+                                return;
                             }
-                            
+
                             // IPs des Geräts als Set für schnellen Lookup speichern
                             if (!device.ips) device.ips = new Set();
                             device.ips.add(net.IPAddress);
@@ -4791,13 +4790,11 @@ document.addEventListener('DOMContentLoaded', function() {
         Object.values(pools).forEach(pool => {
             const uniqueIPs = new Set();
             pool.devices.forEach(device => {
-                if (device.ips) {
-                    device.ips.forEach(ip => {
-                        if (ip.startsWith(pool.network.substring(0, pool.network.lastIndexOf('.')))) {
-                            uniqueIPs.add(ip);
-                        }
-                    });
-                }
+                device.network.forEach(net => {
+                    if (net.IPAddress && net.IPAddress.startsWith(pool.network.substring(0, pool.network.lastIndexOf('.')))) {
+                        uniqueIPs.add(net.IPAddress);
+                    }
+                });
             });
             pool.usedIPs = uniqueIPs.size;
         });
@@ -5956,12 +5953,7 @@ document.addEventListener('DOMContentLoaded', function() {
      * Vorkonfigurierte IP-Pools (werden immer angezeigt, auch wenn keine Geräte vorhanden sind)
      */
     const predefinedIPPools = {
-        '10.10.16': { network: '10.10.16.0', subnet: '255.255.255.0', range: 254, usedIPs: 0, devices: [] },
-        '10.10.17': { network: '10.10.17.0', subnet: '255.255.255.0', range: 254, usedIPs: 0, devices: [] },
-        '10.10.18': { network: '10.10.18.0', subnet: '255.255.255.0', range: 254, usedIPs: 0, devices: [] },
-        '10.10.19': { network: '10.10.19.0', subnet: '255.255.255.0', range: 254, usedIPs: 0, devices: [] },
-        '192.168.1': { network: '192.168.1.0', subnet: '255.255.255.0', range: 254, usedIPs: 0, devices: [] },
-        '192.168.2': { network: '192.168.2.0', subnet: '255.255.255.0', range: 254, usedIPs: 0, devices: [] }
+        '10.10.16': { network: '10.10.16.0', subnet: '255.255.255.0', range: 254, usedIPs: 0, devices: [] }
     };
 
     /**
@@ -5978,21 +5970,17 @@ document.addEventListener('DOMContentLoaded', function() {
                         const match = net.IPAddress.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
                         if (match) {
                             const network = `${match[1]}.${match[2]}.${match[3]}`;
+
+                            // NUR vordefinierte Pools verwenden, KEINE neuen Pools erstellen
                             if (!pools[network]) {
-                                pools[network] = {
-                                    network: network + '.0',
-                                    subnet: net.IPSubnet || '255.255.255.0',
-                                    range: 254, // Annahme: /24 Netzwerk
-                                    usedIPs: 0,
-                                    devices: []
-                                };
+                                return; // Pool nicht in der vordefinierten Liste, überspringen
                             }
 
                             // IPs des Geräts als Set für schnellen Lookup speichern
                             if (!device.ips) device.ips = new Set();
                             device.ips.add(net.IPAddress);
 
-                            // Gerät nur einmal pro Pool hinzufügen (für neue und vorkonfigurierte Pools)
+                            // Gerät nur einmal pro Pool hinzufügen
                             if (!pools[network].devices.some(d => d.assetNumber === device.assetNumber)) {
                                 pools[network].devices.push(device);
                             }
