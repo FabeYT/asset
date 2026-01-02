@@ -1,0 +1,32 @@
+[
+  {
+    "assetNumber": "X9HA3CHS",
+    "hostname": "",
+    "deviceType": "laptop",
+    "serialNumber": "GJFME8433GK",
+    "manufacturer": "MSI",
+    "model": "Lenovo",
+    "status": "in Betrieb",
+    "location": "Dornach",
+    "user": "Hfds",
+    "notes": "fdwfew",
+    "purchaseDate": "2026-01-02",
+    "warrantyExpiry": "2029-01-02",
+    "timestamp": "2026-01-02T09:09:47.977Z",
+    "lastModified": "2026-01-02T09:09:47.977Z",
+    "modifiedBy": "script",
+    "os": "",
+    "cpu": "",
+    "ramGB": 0,
+    "cores": 0,
+    "logicalProc": 0,
+    "storage": [],
+    "network": [],
+    "id": 1767344987977.1704,
+    "drives": {
+      "localDrives": [],
+      "otherDrives": [],
+      "networkDrives": []
+    }
+  }
+]

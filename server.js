@@ -14,8 +14,8 @@ const clients = [];
 // Dateisperre für Race-Condition-Verhinderung
 const fileLocks = new Map();
 
-// Pfad zur devices.json Datei im öffentlichen Verzeichnis
-const devicesFile = path.join(__dirname, 'public', 'devices.json');
+// Pfad zur devices.json Datei im isolierten devices Ordner
+const devicesFile = path.join(__dirname, 'devices', 'devices.json');
 
 // Pfade für SSL Zertifikate (falls vorhanden)
 const sslOptions = {
@@ -508,12 +508,21 @@ function getAllLocalIps() {
 // Funktion zur Initialisierung der devices.json-Datei
 async function initializeDevicesFile() {
     try {
+        // Stelle sicher dass der devices Ordner existiert
+        const devicesDir = path.dirname(devicesFile);
+        await fs.mkdir(devicesDir, { recursive: true });
+        
         await fs.access(devicesFile);
-        console.log('✅ devices.json gefunden.');
+        console.log('✅ devices.json gefunden im isolierten Ordner.');
     } catch {
-        console.log('📄 devices.json nicht gefunden. Erstelle neue Datei...');
+        console.log('📄 devices.json nicht gefunden. Erstelle neue Datei im devices Ordner...');
+        
+        // Stelle sicher dass der Ordner existiert
+        const devicesDir = path.dirname(devicesFile);
+        await fs.mkdir(devicesDir, { recursive: true });
+        
         await fs.writeFile(devicesFile, JSON.stringify([], null, 2));
-        console.log('✅ devices.json erfolgreich erstellt.');
+        console.log('✅ devices.json erfolgreich erstellt im devices Ordner.');
     }
 }
 
